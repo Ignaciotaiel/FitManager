@@ -1,12 +1,25 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import RoleBadge from './RoleBadge.js';
+import ConfirmModal from './ConfirmModal.js';
 
 export function DashboardHeader({ title, subtitle }) {
   const { colors, isDark, toggleTheme } = useTheme();
-  const { user, logout } = useAuth();
+  const { user, exitApp, logout } = useAuth();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleConfirmLogout = async () => {
+    try {
+      setLoggingOut(true);
+      await logout();
+    } finally {
+      setLoggingOut(false);
+      setShowLogoutConfirm(false);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -33,18 +46,44 @@ export function DashboardHeader({ title, subtitle }) {
             </Text>
           </TouchableOpacity>
 
+          {/* Opcion 1: Salir de FitManager (conserva sesion) */}
           <TouchableOpacity
-            onPress={logout}
+            onPress={exitApp}
+            style={[styles.smallBtn, { borderColor: colors.border, backgroundColor: colors.surfaceLight }]}
+            accessibilityRole="button"
+            accessibilityLabel="salir de fitmanager al inicio"
+          >
+            <Text style={[styles.smallBtnText, { color: colors.textSecondary }]}>
+              SALIR
+            </Text>
+          </TouchableOpacity>
+
+          {/* Opcion 2: Cerrar sesion por completo (elimina sesion) */}
+          <TouchableOpacity
+            onPress={() => setShowLogoutConfirm(true)}
             style={[styles.smallBtn, { borderColor: colors.danger, backgroundColor: colors.dangerSurface }]}
             accessibilityRole="button"
-            accessibilityLabel="cerrar sesion"
+            accessibilityLabel="cerrar sesion por completo"
           >
             <Text style={[styles.smallBtnText, { color: colors.danger }]}>
-              SALIR
+              CERRAR
             </Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Modal de confirmacion para cerrar sesion definitivamente */}
+      <ConfirmModal
+        visible={showLogoutConfirm}
+        title="cerrar sesión por completo"
+        message="¿Querés cerrar sesión por completo? Tendrás que volver a autenticarte para entrar."
+        confirmText="cerrar sesión"
+        cancelText="cancelar"
+        isDestructive={true}
+        loading={loggingOut}
+        onConfirm={handleConfirmLogout}
+        onCancel={() => setShowLogoutConfirm(false)}
+      />
 
       {title ? (
         <View style={styles.titleSection}>

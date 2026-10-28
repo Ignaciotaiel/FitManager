@@ -6,7 +6,7 @@ import { Button, Card } from '../../Modules/components/index.js';
 
 // pantalla de inicio del area protegida (marcador de posicion ordenado previo al paso 5)
 export function ProtectedDashboardScreen() {
-  const { user, logout } = useAuth();
+  const { user, exitApp, logout } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
 
   const roleLabels = {
@@ -54,7 +54,12 @@ export function ProtectedDashboardScreen() {
             onPress={toggleTheme}
           />
           <Button
-            title="CERRAR SESIÓN"
+            title="SALIR DE FITMANAGER"
+            variant="secondary"
+            onPress={exitApp}
+          />
+          <Button
+            title="CERRAR SESIÓN POR COMPLETO"
             variant="danger"
             onPress={logout}
           />

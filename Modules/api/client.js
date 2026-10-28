@@ -10,11 +10,20 @@ function getDefaultApiUrl() {
   return 'http://127.0.0.1:3000/api';
 }
 
-// url base configurable mediante variable de entorno publica de expo
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || getDefaultApiUrl();
+function getApiBaseUrl() {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl && envUrl.trim().length > 0) {
+    const trimmed = envUrl.trim().replace(/\/+$/, '');
+    return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+  }
+  return getDefaultApiUrl();
+}
 
-// timeout por defecto de 10 segundos para peticiones http
-const DEFAULT_TIMEOUT_MS = 10000;
+// url base configurable mediante variable de entorno publica de expo (garantiza prefijo /api)
+export const API_BASE_URL = getApiBaseUrl();
+
+// timeout por defecto de 25 segundos para peticiones http (tolera el arranque en frío de Render)
+const DEFAULT_TIMEOUT_MS = 25000;
 
 // funcion auxiliar para peticiones con timeout seguro
 async function fetchWithTimeout(url, options = {}, timeout = DEFAULT_TIMEOUT_MS) {

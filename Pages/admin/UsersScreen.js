@@ -33,10 +33,18 @@ export function UsersScreen({ navigation }) {
   const [errorMessage, setErrorMessage] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
-  // estado para modal de confirmacion de cambio de estado
+  // estado para modal de confirmacion de cambio de estado activo/inactivo
   const [modalState, setModalState] = useState({
     visible: false,
     userToToggle: null,
+    loading: false
+  });
+
+  // estado para modal de confirmacion de cambio de rol (solo entre member y trainer)
+  const [roleModalState, setRoleModalState] = useState({
+    visible: false,
+    targetUser: null,
+    selectedRole: null,
     loading: false
   });
 
@@ -98,7 +106,7 @@ export function UsersScreen({ navigation }) {
     });
   };
 
-  // ejecucion de la actualizacion en el backend
+  // ejecucion de la actualizacion de estado activo/inactivo
   const handleConfirmToggle = async () => {
     const targetUser = modalState.userToToggle;
     if (!targetUser) return;
@@ -129,9 +137,70 @@ export function UsersScreen({ navigation }) {
     }
   };
 
+  // apertura del modal para cambiar rol entre member y trainer
+  const handleOpenRoleModal = (targetUser, newRole) => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    // regla de seguridad: no permitir cambiar roles de cuentas admin ni convertir a admin por esta interfaz
+    if (targetUser.role === 'admin') {
+      setErrorMessage('las cuentas de administrador no pueden modificarse desde esta opción');
+      return;
+    }
+
+    if (newRole !== 'member' && newRole !== 'trainer') {
+      return;
+    }
+
+    if (targetUser.role === newRole) {
+      return;
+    }
+
+    setRoleModalState({
+      visible: true,
+      targetUser,
+      selectedRole: newRole,
+      loading: false
+    });
+  };
+
+  // confirmacion y guardado del cambio de rol via PATCH /api/users/:id
+  const handleConfirmRoleChange = async () => {
+    const { targetUser, selectedRole } = roleModalState;
+    if (!targetUser || !selectedRole) return;
+
+    setRoleModalState((prev) => ({ ...prev, loading: true }));
+
+    try {
+      const res = await userService.updateUser(
+        targetUser.id,
+        { role: selectedRole },
+        token
+      );
+
+      if (res?.ok) {
+        const roleLabel = selectedRole === 'trainer' ? 'Entrenador' : 'Socio (Member)';
+        setSuccessMessage(
+          `rol de ${targetUser.name || targetUser.email} actualizado a ${roleLabel} con éxito`
+        );
+        // actualizacion de la lista tras exito
+        setUsers((prev) =>
+          prev.map((u) => (u.id === targetUser.id ? { ...u, role: selectedRole } : u))
+        );
+      } else {
+        setErrorMessage(res?.error?.message || 'no fue posible actualizar el rol del usuario');
+      }
+    } catch (error) {
+      setErrorMessage(error.message || 'error al comunicar con el servidor al cambiar el rol');
+    } finally {
+      setRoleModalState({ visible: false, targetUser: null, selectedRole: null, loading: false });
+    }
+  };
+
   const renderUserItem = ({ item }) => {
     const isActive = item.is_active === 1 || item.is_active === true;
     const isSelf = String(item.id) === String(currentUser?.id);
+    const isAdmin = item.role === 'admin';
 
     return (
       <Card style={styles.userCard}>
@@ -146,6 +215,62 @@ export function UsersScreen({ navigation }) {
           </View>
           <RoleBadge role={item.role} />
         </View>
+
+        {/* selector de rol para usuarios no administradores */}
+        {!isAdmin && (
+          <View style={styles.roleSelectorSection}>
+            <Text style={[styles.roleSelectorLabel, { color: colors.textMuted }]}>
+              CAMBIAR ROL:
+            </Text>
+            <View style={styles.roleChipsRow}>
+              <TouchableOpacity
+                onPress={() => handleOpenRoleModal(item, 'member')}
+                style={[
+                  styles.roleChip,
+                  { borderColor: colors.border },
+                  item.role === 'member' && {
+                    backgroundColor: colors.primary,
+                    borderColor: colors.primary
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="asignar rol socio"
+              >
+                <Text
+                  style={[
+                    styles.roleChipText,
+                    { color: item.role === 'member' ? '#000000' : colors.textSecondary }
+                  ]}
+                >
+                  SOCIO
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleOpenRoleModal(item, 'trainer')}
+                style={[
+                  styles.roleChip,
+                  { borderColor: colors.border },
+                  item.role === 'trainer' && {
+                    backgroundColor: colors.info || '#3b82f6',
+                    borderColor: colors.info || '#3b82f6'
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="asignar rol entrenador"
+              >
+                <Text
+                  style={[
+                    styles.roleChipText,
+                    { color: item.role === 'trainer' ? '#ffffff' : colors.textSecondary }
+                  ]}
+                >
+                  ENTRENADOR
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
@@ -240,7 +365,7 @@ export function UsersScreen({ navigation }) {
           />
         )}
 
-        {/* modal de confirmacion seguro */}
+        {/* modal de confirmacion seguro para activar/desactivar */}
         <ConfirmModal
           visible={modalState.visible}
           title={
@@ -254,6 +379,18 @@ export function UsersScreen({ navigation }) {
           loading={modalState.loading}
           onConfirm={handleConfirmToggle}
           onCancel={() => setModalState({ visible: false, userToToggle: null, loading: false })}
+        />
+
+        {/* modal de confirmacion para cambio de rol (member <-> trainer) */}
+        <ConfirmModal
+          visible={roleModalState.visible}
+          title="¿cambiar rol de usuario?"
+          message={`¿deseas cambiar el rol de ${roleModalState.targetUser?.name || roleModalState.targetUser?.email} a ${roleModalState.selectedRole === 'trainer' ? 'entrenador (trainer)' : 'socio (member)'}?`}
+          confirmText="guardar rol"
+          cancelText="cancelar"
+          loading={roleModalState.loading}
+          onConfirm={handleConfirmRoleChange}
+          onCancel={() => setRoleModalState({ visible: false, targetUser: null, selectedRole: null, loading: false })}
         />
       </View>
     </SafeAreaView>
@@ -315,6 +452,33 @@ const styles = StyleSheet.create({
   userEmail: {
     fontSize: 13,
     marginTop: 2
+  },
+  roleSelectorSection: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)'
+  },
+  roleSelectorLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    marginBottom: 6
+  },
+  roleChipsRow: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  roleChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1
+  },
+  roleChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5
   },
   divider: {
     height: 1,

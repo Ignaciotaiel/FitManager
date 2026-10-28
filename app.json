@@ -19,6 +19,10 @@
         "INTERNET"
       ]
     },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
     "plugins": [
       "expo-secure-store",
       "@react-native-google-signin/google-signin"

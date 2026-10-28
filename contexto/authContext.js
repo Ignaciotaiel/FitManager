@@ -1,7 +1,46 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { signOutGoogle } from '../Modules/auth/googleAuth';
+import { API_BASE_URL } from '../Modules/api/client';
 
 const TOKEN_KEY = 'fitmanager_auth_token';
+
+// Funciones utilitarias para persistencia multiplataforma (SecureStore en móvil, localStorage en web)
+const storage = {
+  getItem: async (key) => {
+    if (Platform.OS === 'web') {
+      try {
+        return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+      } catch {
+        return null;
+      }
+    }
+    return SecureStore.getItemAsync(key);
+  },
+  setItem: async (key, value) => {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined') window.localStorage.setItem(key, value);
+      } catch (e) {
+        console.warn('error al persistir en localStorage:', e);
+      }
+      return;
+    }
+    return SecureStore.setItemAsync(key, value);
+  },
+  deleteItem: async (key) => {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined') window.localStorage.removeItem(key);
+      } catch (e) {
+        console.warn('error al eliminar de localStorage:', e);
+      }
+      return;
+    }
+    return SecureStore.deleteItemAsync(key);
+  }
+};
 
 const AuthContext = createContext({
   user: null,
@@ -9,7 +48,10 @@ const AuthContext = createContext({
   role: null,
   loading: true,
   isAuthenticated: false,
+  hasPersistedSession: false,
   login: async () => {},
+  exitApp: () => {},
+  resumeSession: () => {},
   logout: async () => {},
   updateProfile: () => {}
 });
@@ -17,6 +59,7 @@ const AuthContext = createContext({
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
+  const [activeSession, setActiveSession] = useState(true);
   const [loading, setLoading] = useState(true);
 
   // funcion para validar decodificacion basica de payload jwt
@@ -31,7 +74,7 @@ export function AuthProvider({ children }) {
           .split('')
           .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
           .join('')
-      );
+        );
       return JSON.parse(jsonPayload);
     } catch {
       return null;
@@ -41,22 +84,22 @@ export function AuthProvider({ children }) {
   // restaurar sesion persistida al iniciar la aplicacion consultando al backend
   const restoreSession = useCallback(async () => {
     try {
-      const savedToken = await SecureStore.getItemAsync(TOKEN_KEY);
+      const savedToken = await storage.getItem(TOKEN_KEY);
       if (savedToken) {
         const payload = decodeJwtPayload(savedToken);
         const isExpired = payload?.exp ? Date.now() >= payload.exp * 1000 : false;
 
         if (!payload || isExpired) {
           // token con formato invalido o expirado localmente
-          await SecureStore.deleteItemAsync(TOKEN_KEY);
+          await storage.deleteItem(TOKEN_KEY);
           setToken(null);
           setUser(null);
+          setActiveSession(false);
           return;
         }
 
         // verificar validez y firma real consultando GET /api/auth/me en el backend
         try {
-          const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:3000/api';
           const response = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: {
               'Authorization': `Bearer ${savedToken}`,
@@ -72,11 +115,13 @@ export function AuthProvider({ children }) {
               email: payload.email,
               role: payload.role
             });
+            setActiveSession(true);
           } else if (response.status === 401 || response.status === 403) {
             // token revocado, rechazado o usuario inactivo en el servidor: limpiar
-            await SecureStore.deleteItemAsync(TOKEN_KEY);
+            await storage.deleteItem(TOKEN_KEY);
             setToken(null);
             setUser(null);
+            setActiveSession(false);
           } else {
             // error del servidor (500, etc.): se conserva el token para reintento sin borrarlo
             setToken(savedToken);
@@ -85,6 +130,7 @@ export function AuthProvider({ children }) {
               email: payload.email,
               role: payload.role
             });
+            setActiveSession(true);
           }
         } catch (netError) {
           // error de red o timeout temporal: NO se borra el token, se preserva la sesion para permitir reintentos
@@ -94,12 +140,18 @@ export function AuthProvider({ children }) {
             email: payload.email,
             role: payload.role
           });
+          setActiveSession(true);
         }
+      } else {
+        setToken(null);
+        setUser(null);
+        setActiveSession(false);
       }
     } catch (error) {
-      console.warn('no se pudo recuperar el token desde securestore', error);
+      console.warn('no se pudo recuperar el token desde el almacenamiento', error);
       setToken(null);
       setUser(null);
+      setActiveSession(false);
     } finally {
       setLoading(false);
     }
@@ -112,7 +164,7 @@ export function AuthProvider({ children }) {
   // inicio de sesion: guarda token seguro y extrae rol del payload firmado
   const login = async (newToken, userData) => {
     try {
-      await SecureStore.setItemAsync(TOKEN_KEY, newToken);
+      await storage.setItem(TOKEN_KEY, newToken);
       const payload = decodeJwtPayload(newToken);
 
       setToken(newToken);
@@ -124,22 +176,49 @@ export function AuthProvider({ children }) {
         email: payload?.email || userData?.email,
         role: serverRole
       });
+      setActiveSession(true);
     } catch (error) {
-      console.warn('error al persistir el token en securestore', error);
+      console.warn('error al persistir el token', error);
       throw error;
     }
   };
 
-  // cierre de sesion: limpia almacenamiento seguro y estado en memoria
+  // 1. «Salir de FitManager»:
+  // Vuelve a la pantalla de bienvenida conservando la sesión persistida
+  // No elimina el JWT ni las credenciales ni cierra sesión del proveedor externo
+  const exitApp = () => {
+    setActiveSession(false);
+  };
+
+  // Permite volver a ingresar directamente al panel si hay una sesión persistida válida
+  const resumeSession = () => {
+    if (token && user) {
+      setActiveSession(true);
+    }
+  };
+
+  // 2. «Cerrar sesión por completo»:
+  // Elimina de forma segura el JWT, limpia el estado en memoria
+  // e invoca GoogleSignin.signOut únicamente en plataformas nativas
   const logout = async () => {
     try {
-      await SecureStore.deleteItemAsync(TOKEN_KEY);
+      // 1. Eliminar token
+      await storage.deleteItem(TOKEN_KEY);
     } catch (error) {
-      console.warn('error al eliminar token de securestore', error);
-    } finally {
-      setToken(null);
-      setUser(null);
+      console.warn('error al eliminar token:', error);
     }
+
+    // 2. Cerrar sesión de Google mediante el módulo multiplataforma (nativo en Android, no-op en web)
+    try {
+      await signOutGoogle();
+    } catch (googleError) {
+      console.warn('aviso al cerrar sesion de google:', googleError?.message);
+    }
+
+    // 3. Limpiar estado en memoria
+    setToken(null);
+    setUser(null);
+    setActiveSession(false);
   };
 
   // actualizacion de perfil en memoria
@@ -148,7 +227,8 @@ export function AuthProvider({ children }) {
   };
 
   const role = user?.role || null;
-  const isAuthenticated = Boolean(token && user);
+  const hasPersistedSession = Boolean(token && user);
+  const isAuthenticated = Boolean(token && user && activeSession);
 
   const value = useMemo(
     () => ({
@@ -156,13 +236,17 @@ export function AuthProvider({ children }) {
       token,
       role,
       loading,
+      activeSession,
+      hasPersistedSession,
       isAuthenticated,
       login,
+      exitApp,
+      resumeSession,
       logout,
       updateProfile,
       restoreSession
     }),
-    [user, token, role, loading, isAuthenticated, restoreSession]
+    [user, token, role, loading, activeSession, hasPersistedSession, isAuthenticated, restoreSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

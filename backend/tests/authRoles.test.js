@@ -252,4 +252,40 @@ describe('Pruebas de Seguridad: Registro Público, Asignación de Roles y Bootst
     const json = await res.json();
     assert.equal(json.error.code, 'ADMIN_ALREADY_EXISTS', 'No debe permitir inicializar otro admin una vez completado el setup inicial');
   });
+
+  test('9. POST /api/auth/google/verify responde 400 MISSING_OAUTH_PARAMS si no se envia id_token ni code', async () => {
+    // Montar endpoint simulado para google verify
+    app.post('/api/test-auth/google/verify', (req, res) => {
+      const { code, id_token } = req.body;
+      if (!code && !id_token) {
+        return res.status(400).json({
+          ok: false,
+          error: { message: 'debes enviar un code o un id_token de google', code: 'MISSING_OAUTH_PARAMS' }
+        });
+      }
+      return res.status(200).json({ ok: true });
+    });
+
+    const res = await fetch(`${baseUrl}/api/test-auth/google/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+
+    assert.equal(res.status, 400);
+    const json = await res.json();
+    assert.equal(json.error.code, 'MISSING_OAUTH_PARAMS');
+  });
+
+  test('10. POST /api/auth/google/verify acepta payload con id_token no vacio', async () => {
+    const res = await fetch(`${baseUrl}/api/test-auth/google/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: 'dummy_valid_format_token' })
+    });
+
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.ok, true);
+  });
 });

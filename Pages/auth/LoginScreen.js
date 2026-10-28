@@ -12,7 +12,6 @@ import {
 import { useForm, Controller } from 'react-hook-form';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
-import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { authService } from '../../Modules/auth/authService.js';
 import {
   Button,
@@ -20,12 +19,19 @@ import {
   Card,
   StatusBanner
 } from '../../Modules/components/index.js';
+import {
+  configureGoogleSignIn,
+  hasPlayServices,
+  signInGoogle,
+  statusCodes
+} from '../../Modules/auth/googleAuth.js';
 
 export function LoginScreen({ navigation }) {
   const { colors, isDark, toggleTheme } = useTheme();
   const { login } = useAuth();
 
   const [loading, setLoading] = useState(false);
+  const [socialLoading, setSocialLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [socialInfo, setSocialInfo] = useState(null);
 
@@ -62,8 +68,10 @@ export function LoginScreen({ navigation }) {
         setErrorMessage('tu cuenta se encuentra desactivada. contacta al administrador');
       } else if (error.status === 400 && error.code === 'SOCIAL_ACCOUNT_ONLY') {
         setErrorMessage('esta cuenta fue creada mediante inicio social, ingresa con tu proveedor');
-      } else if (error.code === 'NETWORK_ERROR' || error.code === 'TIMEOUT_ERROR') {
-        setErrorMessage('no se pudo conectar con el servidor. verifica que el backend este activo');
+      } else if (error.code === 'TIMEOUT_ERROR') {
+        setErrorMessage('el servidor tardó demasiado en responder. por favor, intenta nuevamente.');
+      } else if (error.code === 'NETWORK_ERROR') {
+        setErrorMessage('no se pudo conectar con el servidor. verifica tu conexion a internet.');
       } else {
         setErrorMessage(error.message || 'error inesperado al iniciar sesion');
       }
@@ -74,72 +82,94 @@ export function LoginScreen({ navigation }) {
 
   // manejo de inicio de sesion social nativo con Google Sign-In para Android
   const handleSocialLogin = async (provider) => {
+    if (socialLoading || loading) {
+      return;
+    }
+
     setErrorMessage(null);
     setSocialInfo(null);
 
     if (provider === 'google') {
-      try {
-        // 1. Verificar si el backend tiene el endpoint habilitado
-        await authService.checkOAuthStatus('google');
+      if (Platform.OS === 'web') {
+        setSocialInfo(
+          'El inicio de sesión con Google está disponible únicamente en la aplicación móvil.'
+        );
+        return;
+      }
 
-        // 2. Obtener el Web Client ID (audiencia necesaria para el id_token)
+      setSocialLoading(true);
+
+      try {
+        // 1. Obtener el Web Client ID (audiencia necesaria para el id_token)
         const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID;
 
         if (!webClientId) {
-          setSocialInfo(
-            'el inicio con google requiere configurar EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID en el archivo .env de la aplicacion.'
+          setErrorMessage(
+            'El inicio con Google requiere configurar EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID en el archivo .env de la aplicación.'
           );
+          setSocialLoading(false);
           return;
         }
 
-        // Configurar GoogleSignin con el Web Client ID
-        GoogleSignin.configure({
-          webClientId: webClientId,
-          offlineAccess: false,
-          scopes: ['profile', 'email']
-        });
+        // 2. Configurar GoogleSignin con el Web Client ID
+        await configureGoogleSignIn(webClientId);
 
-        // Verificar disponibilidad de Google Play Services
-        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+        // 3. Verificar disponibilidad de Google Play Services
+        await hasPlayServices();
 
-        // Iniciar dialogo nativo de Google Sign-In
-        const signInResult = await GoogleSignin.signIn();
-        const idToken = signInResult?.data?.idToken || signInResult?.idToken;
+        // 4. Iniciar diálogo nativo de Google Sign-In
+        const signInResult = await signInGoogle();
 
-        if (!idToken) {
-          throw new Error('google no proporciono un id_token en la respuesta.');
+        // Si el usuario canceló voluntariamente el diálogo, salir silenciosamente
+        if (signInResult?.cancelled) {
+          setSocialLoading(false);
+          return;
         }
 
-        // Enviar id_token al backend para validacion segura contra tokeninfo de Google
+        const idToken = signInResult?.idToken;
+
+        if (!idToken) {
+          setErrorMessage('Google no proporcionó el token de identidad necesario. Por favor, intenta de nuevo.');
+          setSocialLoading(false);
+          return;
+        }
+
+        // 5. Enviar id_token al backend para validación segura contra tokeninfo de Google
         const verifyRes = await authService.verifyGoogle({ id_token: idToken });
 
         if (verifyRes?.ok && verifyRes?.data?.token) {
           await login(verifyRes.data.token, verifyRes.data.user);
         } else {
-          setErrorMessage(verifyRes?.error?.message || 'error al validar cuenta de google');
+          setErrorMessage(verifyRes?.error?.message || 'Error al validar la cuenta de Google con el servidor.');
         }
       } catch (error) {
-        if (error.code === statusCodes?.SIGN_IN_CANCELLED) {
-          setSocialInfo('inicio de sesion con google cancelado.');
-        } else if (error.code === statusCodes?.IN_PROGRESS) {
-          setSocialInfo('el inicio de sesion con google ya se encuentra en curso.');
-        } else if (error.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE) {
-          setErrorMessage('los servicios de google play no estan disponibles o requieren actualizacion.');
-        } else if (error.code === 'OAUTH_NOT_CONFIGURED' || error.status === 501) {
-          setSocialInfo(
-            'el inicio de sesion con google requiere GOOGLE_CLIENT_ID configurado en backend/.env.'
-          );
+        if (error.code === statusCodes?.SIGN_IN_CANCELLED || error.code === 'SIGN_IN_CANCELLED' || error.code === 12501) {
+          // Cancelación voluntaria por excepción nativa: cerrar silenciosamente
+          return;
+        } else if (error.code === statusCodes?.IN_PROGRESS || error.code === 'IN_PROGRESS') {
+          setSocialInfo('El inicio de sesión con Google ya se encuentra en curso.');
+        } else if (error.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE || error.code === 'PLAY_SERVICES_NOT_AVAILABLE') {
+          setErrorMessage('Los servicios de Google Play no están disponibles en este dispositivo o requieren actualización.');
+        } else if (error.code === 'TIMEOUT_ERROR') {
+          setErrorMessage('El servidor tardó en responder la validación de Google. El servicio puede estar iniciando; por favor, reintenta.');
         } else if (error.code === 'NETWORK_ERROR') {
-          setErrorMessage('no se pudo conectar con el servidor para iniciar con google.');
+          setErrorMessage('No se pudo conectar con el servidor para validar tu cuenta de Google.');
+        } else if (error.status === 401) {
+          setErrorMessage(error.message || 'El token de Google fue rechazado por el servidor.');
+        } else if (error.status === 403) {
+          setErrorMessage('Tu cuenta vinculada a Google se encuentra desactivada.');
         } else {
-          setErrorMessage(error.message || 'error al procesar inicio de sesion con google');
+          setErrorMessage(error.message || 'Error al procesar el inicio de sesión con Google.');
         }
+      } finally {
+        setSocialLoading(false);
       }
       return;
     }
 
     // Para github y discord (Fase 2B)
     try {
+      setSocialLoading(true);
       await authService.checkOAuthStatus(provider);
       setSocialInfo(`proveedor ${provider} preparado para la siguiente fase.`);
     } catch (error) {
@@ -152,6 +182,8 @@ export function LoginScreen({ navigation }) {
       } else {
         setSocialInfo(`estado de ${provider}: ${error.message}`);
       }
+    } finally {
+      setSocialLoading(false);
     }
   };
 
@@ -272,12 +304,21 @@ export function LoginScreen({ navigation }) {
             <View style={styles.socialButtonsRow}>
               <TouchableOpacity
                 onPress={() => handleSocialLogin('google')}
-                style={[styles.socialButton, { borderColor: colors.border, backgroundColor: colors.card }]}
+                disabled={socialLoading || loading}
+                style={[
+                  styles.socialButton,
+                  { borderColor: colors.border, backgroundColor: colors.card },
+                  (Platform.OS === 'web' || socialLoading || loading) && { opacity: 0.6 }
+                ]}
                 accessibilityRole="button"
-                accessibilityLabel="iniciar con google"
+                accessibilityLabel={
+                  Platform.OS === 'web'
+                    ? 'Google (disponible únicamente en la app móvil)'
+                    : 'iniciar con google'
+                }
               >
                 <Text style={[styles.socialButtonText, { color: colors.text }]}>
-                  GOOGLE
+                  {socialLoading ? 'CONECTANDO...' : 'GOOGLE'}
                 </Text>
               </TouchableOpacity>
 

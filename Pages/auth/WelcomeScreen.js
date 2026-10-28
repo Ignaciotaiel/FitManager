@@ -1,10 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
 import { useTheme } from '../../contexto/themeContext.js';
+import { useAuth } from '../../contexto/authContext.js';
 import { Button, Card } from '../../Modules/components/index.js';
 
 export function WelcomeScreen({ navigation }) {
   const { colors, isDark, toggleTheme } = useTheme();
+  const { hasPersistedSession, resumeSession, user } = useAuth();
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -82,9 +84,17 @@ export function WelcomeScreen({ navigation }) {
 
         {/* acciones de navegacion */}
         <View style={styles.actionsSection}>
+          {hasPersistedSession ? (
+            <Button
+              title={`CONTINUAR SESIÓN (${user?.name || user?.email?.split('@')[0] || 'USUARIO'})`}
+              variant="primary"
+              onPress={resumeSession}
+              style={{ marginBottom: 8 }}
+            />
+          ) : null}
           <Button
             title="INICIAR SESIÓN"
-            variant="primary"
+            variant={hasPersistedSession ? 'secondary' : 'primary'}
             onPress={() => navigation.navigate('Login')}
           />
           <Button
