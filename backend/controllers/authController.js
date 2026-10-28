@@ -23,9 +23,10 @@ function generateToken(user) {
 }
 
 // registro de usuario local (con contrasena protegida por bcrypt)
+// REGLA DE SEGURIDAD: Todo registro público crea estrictamente usuarios con rol 'member'
 export async function register(req, res, next) {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
     // validaciones obligatorias
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -49,14 +50,8 @@ export async function register(req, res, next) {
       });
     }
 
-    // rol opcional en registro: por defecto 'member'. si se especifica otro, validar
-    const finalRole = role || 'member';
-    if (!isValidRole(finalRole)) {
-      return res.status(400).json({
-        ok: false,
-        error: { message: 'el rol proporcionado no es valido', code: 'INVALID_ROLE' }
-      });
-    }
+    // Seguridad: Se ignora cualquier campo role del cliente; siempre es 'member'
+    const finalRole = 'member';
 
     const cleanEmail = email.trim().toLowerCase();
 
@@ -506,4 +501,155 @@ export function oauthDiscord(req, res) {
   const callbackUrl = process.env.DISCORD_CALLBACK_URL;
   const redirectUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code&scope=identify%20email`;
   res.redirect(redirectUrl);
+}
+
+// Inicializacion segura del primer administrador del sistema
+// Reglas estrictas:
+// 1. Requiere OBLIGATORIAMENTE que SETUP_ADMIN_KEY este configurada en variables de entorno.
+// 2. Requiere que la peticion envie la cabecera 'x-setup-key' coincidente con SETUP_ADMIN_KEY.
+// 3. Emplea un bloqueo exclusivo a nivel de MariaDB (GET_LOCK) para evitar condiciones de carrera concurrentes.
+// 4. Si ya existe un administrador en la base de datos, rechaza con 403 y se sella de forma permanente.
+export async function setupFirstAdmin(req, res, next) {
+  const requiredSetupKey = process.env.SETUP_ADMIN_KEY;
+
+  // 1. Si no hay clave configurada en el servidor, el endpoint esta estrictamente DESHABILITADO
+  if (!requiredSetupKey || typeof requiredSetupKey !== 'string' || requiredSetupKey.trim().length === 0) {
+    return res.status(403).json({
+      ok: false,
+      error: {
+        message: 'la inicializacion de administrador esta deshabilitada en este entorno',
+        code: 'SETUP_DISABLED'
+      }
+    });
+  }
+
+  // 2. Verificar cabecera x-setup-key
+  const clientSetupKey = req.headers['x-setup-key'];
+  if (!clientSetupKey || clientSetupKey !== requiredSetupKey) {
+    return res.status(401).json({
+      ok: false,
+      error: {
+        message: 'clave de aprovisionamiento no proporcionada o invalida',
+        code: 'INVALID_SETUP_KEY'
+      }
+    });
+  }
+
+  const { name, email, password } = req.body;
+
+  // Validaciones
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    return res.status(400).json({
+      ok: false,
+      error: { message: 'el nombre es obligatorio', code: 'INVALID_NAME' }
+    });
+  }
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({
+      ok: false,
+      error: { message: 'el correo electronico no es valido', code: 'INVALID_EMAIL' }
+    });
+  }
+
+  if (!isValidPassword(password)) {
+    return res.status(400).json({
+      ok: false,
+      error: { message: 'la contrasena debe tener al menos 6 caracteres', code: 'INVALID_PASSWORD' }
+    });
+  }
+
+  let connection;
+  let lockAcquired = false;
+
+  try {
+    connection = await pool.getConnection();
+
+    // 3. Mecanismo de exclusion mutua en MariaDB (GET_LOCK) para prevenir concurrencia
+    const [lockResult] = await connection.execute("SELECT GET_LOCK('fitmanager_admin_setup_lock', 10) AS acquired");
+    if (!lockResult || lockResult[0]?.acquired !== 1) {
+      return res.status(409).json({
+        ok: false,
+        error: { message: 'operacion de inicializacion en curso, intente nuevamente', code: 'SETUP_LOCKED' }
+      });
+    }
+    lockAcquired = true;
+
+    // 4. Comprobar si ya existe AL MENOS UN administrador en el sistema
+    const [adminRows] = await connection.execute(
+      "SELECT id FROM users WHERE role = 'admin' LIMIT 1"
+    );
+
+    if (adminRows.length > 0) {
+      return res.status(403).json({
+        ok: false,
+        error: {
+          message: 'el sistema ya cuenta con un administrador configurado; no es posible inicializar otro por esta via',
+          code: 'ADMIN_ALREADY_EXISTS'
+        }
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Comprobar si el correo ya existe
+    const [existing] = await connection.execute(
+      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      [cleanEmail]
+    );
+
+    if (existing.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        error: { message: 'el correo electronico ya esta registrado', code: 'EMAIL_ALREADY_EXISTS' }
+      });
+    }
+
+    // 5. Hash de contrasena con bcrypt (sin imprimir ni registrar la contrasena)
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    await connection.beginTransaction();
+
+    const [insertResult] = await connection.execute(
+      "INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, 'admin', 1)",
+      [name.trim(), cleanEmail, passwordHash]
+    );
+
+    await connection.commit();
+
+    const newAdmin = {
+      id: insertResult.insertId,
+      name: name.trim(),
+      email: cleanEmail,
+      role: 'admin',
+      is_active: 1
+    };
+
+    const token = generateToken(newAdmin);
+
+    return res.status(201).json({
+      ok: true,
+      message: 'primer administrador inicializado exitosamente',
+      data: {
+        token,
+        user: newAdmin
+      }
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
+    next(error);
+  } finally {
+    if (connection) {
+      if (lockAcquired) {
+        try {
+          await connection.execute("SELECT RELEASE_LOCK('fitmanager_admin_setup_lock')");
+        } catch {}
+      }
+      connection.release();
+    }
+  }
 }
