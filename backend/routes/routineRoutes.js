@@ -4,6 +4,8 @@ import {
   getRoutineById,
   createRoutine,
   updateRoutine,
+  assignMembersToRoutine,
+  removeMemberAssignment,
   deleteRoutine
 } from '../controllers/routineController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
@@ -21,5 +23,9 @@ router.get('/:id', getRoutineById);
 router.post('/', requireRole('admin', 'trainer'), createRoutine);
 router.patch('/:id', requireRole('admin', 'trainer'), updateRoutine);
 router.delete('/:id', requireRole('admin', 'trainer'), deleteRoutine);
+
+// gestion de asignaciones de socios: solo admin y trainer propietario
+router.post('/:id/assignments', requireRole('admin', 'trainer'), assignMembersToRoutine);
+router.delete('/:id/assignments/:memberId', requireRole('admin', 'trainer'), removeMemberAssignment);
 
 export default router;

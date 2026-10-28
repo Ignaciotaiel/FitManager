@@ -22,6 +22,16 @@ export const routineService = {
     return apiClient.patch(`/routines/${id}`, data, { token });
   },
 
+  // asignar multiples socios a una rutina
+  assignMembers: async (id, memberIds, token) => {
+    return apiClient.post(`/routines/${id}/assignments`, { member_ids: memberIds }, { token });
+  },
+
+  // quitar la asignacion de un socio particular
+  removeAssignment: async (id, memberId, token) => {
+    return apiClient.delete(`/routines/${id}/assignments/${memberId}`, { token });
+  },
+
   // eliminar rutina y sus relaciones en transaccion atomica
   deleteRoutine: async (id, token) => {
     return apiClient.delete(`/routines/${id}`, { token });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { routineService } from '../../Modules/routines/routineService.js';
 import { exerciseService } from '../../Modules/exercises/exerciseService.js';
+import { userService } from '../../Modules/users/userService.js';
 import {
   DashboardHeader,
   Card,
@@ -33,6 +34,7 @@ export function TrainerDashboardScreen({ navigation }) {
 
   const [routines, setRoutines] = useState([]);
   const [exercisesLibrary, setExercisesLibrary] = useState([]);
+  const [availableMembers, setAvailableMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -43,8 +45,12 @@ export function TrainerDashboardScreen({ navigation }) {
   const [editingRoutine, setEditingRoutine] = useState(null); // null = crear, objeto = editar
   const [formName, setFormName] = useState('');
   const [formDesc, setFormDesc] = useState('');
-  const [formMemberId, setFormMemberId] = useState('');
   const [selectedExercises, setSelectedExercises] = useState([]); // array de { exercise_id, name, sets_count, reps, position }
+  
+  // asignaciones multiples de socios
+  const [selectedMemberIds, setSelectedMemberIds] = useState([]); // array de user_ids
+  const [memberSearchQuery, setMemberSearchQuery] = useState('');
+
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState(null);
 
@@ -58,10 +64,11 @@ export function TrainerDashboardScreen({ navigation }) {
   const loadData = useCallback(async () => {
     try {
       setErrorMessage(null);
-      // cargar rutinas del trainer y biblioteca de ejercicios para seleccion
-      const [routinesRes, exercisesRes] = await Promise.all([
+      // cargar rutinas del trainer, biblioteca de ejercicios y socios activos
+      const [routinesRes, exercisesRes, usersRes] = await Promise.all([
         routineService.getRoutines(token),
-        exerciseService.getExercises({}, token)
+        exerciseService.getExercises({}, token),
+        userService.getUsers(token)
       ]);
 
       if (routinesRes?.ok && Array.isArray(routinesRes?.data?.routines)) {
@@ -69,6 +76,10 @@ export function TrainerDashboardScreen({ navigation }) {
       }
       if (exercisesRes?.ok && Array.isArray(exercisesRes?.data?.exercises)) {
         setExercisesLibrary(exercisesRes.data.exercises);
+      }
+      if (usersRes?.ok && Array.isArray(usersRes?.data?.users)) {
+        // filtrar solo socios
+        setAvailableMembers(usersRes.data.users.filter(u => u.role === 'member'));
       }
     } catch (error) {
       if (error.code === 'NETWORK_ERROR') {
@@ -91,26 +102,55 @@ export function TrainerDashboardScreen({ navigation }) {
     loadData();
   };
 
-  // abrir modal para crear nueva rutina con selector de ejercicios
+  // filtrar lista de socios segun busqueda
+  const filteredMembers = useMemo(() => {
+    if (!memberSearchQuery.trim()) return availableMembers;
+    const q = memberSearchQuery.toLowerCase().trim();
+    return availableMembers.filter(m =>
+      (m.name && m.name.toLowerCase().includes(q)) ||
+      (m.email && m.email.toLowerCase().includes(q))
+    );
+  }, [availableMembers, memberSearchQuery]);
+
+  // abrir modal para crear nueva rutina
   const handleOpenCreate = () => {
     setEditingRoutine(null);
     setFormName('');
     setFormDesc('');
-    setFormMemberId('');
+    setSelectedMemberIds([]);
+    setMemberSearchQuery('');
     setSelectedExercises([]);
     setFormError(null);
     setModalVisible(true);
   };
 
-  // abrir modal para editar rutina (metadatos y socio asignado)
+  // abrir modal para editar rutina
   const handleOpenEdit = (routine) => {
     setEditingRoutine(routine);
     setFormName(routine.name || '');
     setFormDesc(routine.description || '');
-    setFormMemberId(routine.member_id ? String(routine.member_id) : '');
+    
+    // cargar IDs de los usuarios ya asignados
+    const currentAssignedIds = Array.isArray(routine.assigned_users)
+      ? routine.assigned_users.map(u => Number(u.member_id || u.id))
+      : (routine.member_id ? [Number(routine.member_id)] : []);
+    
+    setSelectedMemberIds(currentAssignedIds);
+    setMemberSearchQuery('');
     setSelectedExercises([]);
     setFormError(null);
     setModalVisible(true);
+  };
+
+  // toggle seleccion de socio
+  const toggleMemberSelection = (memberId) => {
+    setSelectedMemberIds(prev => {
+      if (prev.includes(memberId)) {
+        return prev.filter(id => id !== memberId);
+      } else {
+        return [...prev, memberId];
+      }
+    });
   };
 
   // agregar un ejercicio de la biblioteca a la rutina
@@ -164,19 +204,17 @@ export function TrainerDashboardScreen({ navigation }) {
     setFormError(null);
 
     try {
-      const parsedMemberId = formMemberId.trim() ? Number(formMemberId.trim()) : null;
-
       if (editingRoutine) {
-        // edicion de metadatos mediante PATCH /api/routines/:id
+        // edicion de metadatos y asignaciones mediante PATCH /api/routines/:id
         const patchPayload = {
           name: formName.trim(),
           description: formDesc.trim() || null,
-          member_id: parsedMemberId
+          member_ids: selectedMemberIds
         };
 
         const res = await routineService.updateRoutine(editingRoutine.id, patchPayload, token);
         if (res?.ok) {
-          setSuccessMessage(`rutina "${formName.trim()}" actualizada con éxito`);
+          setSuccessMessage(`rutina "${formName.trim()}" actualizada con éxito (${selectedMemberIds.length} socios asignados)`);
           setModalVisible(false);
           loadData();
         }
@@ -192,14 +230,14 @@ export function TrainerDashboardScreen({ navigation }) {
         const createPayload = {
           name: formName.trim(),
           description: formDesc.trim() || null,
-          member_id: parsedMemberId,
+          member_ids: selectedMemberIds,
           exercises: formattedExercises
         };
 
         const res = await routineService.createRoutine(createPayload, token);
 
         if (res?.ok && res?.data?.routine) {
-          setSuccessMessage(`rutina "${res.data.routine.name}" creada con éxito`);
+          setSuccessMessage(`rutina "${res.data.routine.name}" creada con éxito (${selectedMemberIds.length} socios asignados)`);
           setModalVisible(false);
           loadData();
         }
@@ -230,6 +268,10 @@ export function TrainerDashboardScreen({ navigation }) {
   };
 
   const renderRoutineItem = ({ item }) => {
+    const assignedCount = Array.isArray(item.assigned_users)
+      ? item.assigned_users.length
+      : (item.member_id ? 1 : 0);
+
     return (
       <Card style={styles.routineCard}>
         <View style={styles.routineHeader}>
@@ -265,10 +307,16 @@ export function TrainerDashboardScreen({ navigation }) {
 
         <View style={styles.metaRow}>
           <Text style={[styles.metaText, { color: colors.textMuted }]}>
-            socio: <Text style={{ color: item.member_name ? colors.primary : colors.warning, fontWeight: '700' }}>
-              {item.member_name || 'sin asignar'}
+            socios asignados:{' '}
+            <Text style={{ color: assignedCount > 0 ? colors.primary : colors.warning, fontWeight: '700' }}>
+              {assignedCount > 0 ? `${assignedCount} socio(s)` : 'sin asignar (plantilla)'}
             </Text>
           </Text>
+          {assignedCount > 0 && item.member_name ? (
+            <Text style={[styles.assignedNamesText, { color: colors.textSecondary }]}>
+              {item.member_name}
+            </Text>
+          ) : null}
         </View>
 
         <Button
@@ -286,7 +334,7 @@ export function TrainerDashboardScreen({ navigation }) {
       <View style={styles.container}>
         <DashboardHeader
           title="PANEL DE ENTRENAMIENTO"
-          subtitle="gestión de rutinas de socios y biblioteca de ejercicios"
+          subtitle="gestión de rutinas multiusuario y biblioteca de ejercicios"
         />
 
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
@@ -301,7 +349,7 @@ export function TrainerDashboardScreen({ navigation }) {
             style={styles.halfBtn}
           />
           <Button
-            title="+ NUEVA RUTINA"
+            title="+ CREAR RUTINA"
             variant="primary"
             onPress={handleOpenCreate}
             style={styles.halfBtn}
@@ -309,11 +357,11 @@ export function TrainerDashboardScreen({ navigation }) {
         </View>
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          MIS RUTINAS CREADAS ({routines.length})
+          TUS RUTINAS CREADAS ({routines.length})
         </Text>
 
         {loading ? (
-          <LoadingSpinner message="cargando rutinas..." />
+          <LoadingSpinner message="cargando tus rutinas..." />
         ) : (
           <FlatList
             data={routines}
@@ -326,15 +374,13 @@ export function TrainerDashboardScreen({ navigation }) {
             ListEmptyComponent={
               <EmptyState
                 title="sin rutinas creadas"
-                description="aún no creaste rutinas deportivas. comenzá armando una desde '+ NUEVA RUTINA'."
-                actionTitle="CREAR RUTINA"
-                onAction={handleOpenCreate}
+                description="aún no creaste rutinas. tocá '+ CREAR RUTINA' para diagramar un plan de entrenamiento."
               />
             }
           />
         )}
 
-        {/* modal de creacion / edicion de rutina con selector de ejercicios */}
+        {/* modal de creacion / edicion de rutina */}
         <Modal
           visible={modalVisible}
           transparent
@@ -352,8 +398,8 @@ export function TrainerDashboardScreen({ navigation }) {
                 </Text>
                 <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
                   {editingRoutine
-                    ? 'modificá el nombre, descripción o socio asignado'
-                    : 'diagramá el plan seleccionando ejercicios de la biblioteca'}
+                    ? 'modificá el nombre, descripción o asigná varios socios'
+                    : 'diagramá el plan seleccionando ejercicios y asigná socios'}
                 </Text>
 
                 {formError && <StatusBanner message={formError} type="error" />}
@@ -374,13 +420,69 @@ export function TrainerDashboardScreen({ navigation }) {
                   numberOfLines={3}
                 />
 
-                <Input
-                  label="id de socio asignado (opcional)"
-                  placeholder="ej. 5 (dejar vacío si es plantilla general)"
-                  value={formMemberId}
-                  onChangeText={setFormMemberId}
-                  keyboardType="numeric"
-                />
+                {/* SECCION ASIGNAR USUARIOS MULTIPLES */}
+                <View style={styles.assignmentSection}>
+                  <View style={styles.assignmentHeader}>
+                    <Text style={[styles.subSectionTitle, { color: colors.text }]}>
+                      ASIGNAR SOCIOS ({selectedMemberIds.length} seleccionados)
+                    </Text>
+                    {selectedMemberIds.length > 0 && (
+                      <TouchableOpacity onPress={() => setSelectedMemberIds([])}>
+                        <Text style={[styles.clearText, { color: colors.danger }]}>DESMARCAR TODOS</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <Input
+                    placeholder="buscar socio por nombre o correo..."
+                    value={memberSearchQuery}
+                    onChangeText={setMemberSearchQuery}
+                    style={{ marginVertical: 4 }}
+                  />
+
+                  <View style={[styles.membersListContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                    {availableMembers.length === 0 ? (
+                      <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
+                        no hay socios registrados disponibles.
+                      </Text>
+                    ) : filteredMembers.length === 0 ? (
+                      <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
+                        no se encontraron socios con esa búsqueda.
+                      </Text>
+                    ) : (
+                      filteredMembers.map(m => {
+                        const isSelected = selectedMemberIds.includes(m.id);
+                        return (
+                          <TouchableOpacity
+                            key={String(m.id)}
+                            onPress={() => toggleMemberSelection(m.id)}
+                            style={[
+                              styles.memberItemRow,
+                              {
+                                borderColor: isSelected ? colors.primary : colors.border,
+                                backgroundColor: isSelected ? 'rgba(57, 255, 20, 0.08)' : 'transparent'
+                              }
+                            ]}
+                          >
+                            <View style={styles.checkboxCol}>
+                              <Text style={[styles.checkboxText, { color: isSelected ? colors.primary : colors.textMuted }]}>
+                                {isSelected ? '☑' : '☐'}
+                              </Text>
+                            </View>
+                            <View style={styles.memberInfoCol}>
+                              <Text style={[styles.memberNameText, { color: colors.text }]}>
+                                {m.name}
+                              </Text>
+                              <Text style={[styles.memberEmailText, { color: colors.textSecondary }]}>
+                                {m.email}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </View>
+                </View>
 
                 {/* selector de ejercicios solo en creacion */}
                 {!editingRoutine && (
@@ -501,7 +603,7 @@ export function TrainerDashboardScreen({ navigation }) {
         <ConfirmModal
           visible={deleteModal.visible}
           title="¿eliminar rutina?"
-          message="esta acción eliminará la rutina y sus ejercicios vinculados de forma permanente."
+          message="esta acción eliminará la rutina y sus asignaciones. el historial de entrenamientos de los socios permanecerá intacto."
           confirmText="eliminar"
           isDestructive
           loading={deleteModal.loading}
@@ -581,6 +683,10 @@ const styles = StyleSheet.create({
   metaText: {
     fontSize: 12
   },
+  assignedNamesText: {
+    fontSize: 11,
+    marginTop: 2
+  },
   detailBtn: {
     marginTop: 6
   },
@@ -617,7 +723,54 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     fontSize: 12,
-    marginBottom: 10
+    padding: 10
+  },
+  assignmentSection: {
+    marginVertical: 10
+  },
+  assignmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4
+  },
+  clearText: {
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  membersListContainer: {
+    maxHeight: 180,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 6,
+    marginTop: 4
+  },
+  memberItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginVertical: 2
+  },
+  checkboxCol: {
+    marginRight: 10
+  },
+  checkboxText: {
+    fontSize: 18,
+    fontWeight: '900'
+  },
+  memberInfoCol: {
+    flex: 1
+  },
+  memberNameText: {
+    fontSize: 13,
+    fontWeight: '800'
+  },
+  memberEmailText: {
+    fontSize: 11,
+    marginTop: 1
   },
   exerciseSelectorSection: {
     marginVertical: 10

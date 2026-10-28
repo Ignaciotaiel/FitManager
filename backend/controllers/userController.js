@@ -1,12 +1,21 @@
 import pool from '../config/db.js';
 import { isValidEmail, isValidRole } from '../middlewares/validate.js';
 
-// listar todos los usuarios (solo para rol admin)
+// listar usuarios (admin ve todos; trainer ve socios activos disponibles para asignar)
 export async function listUsers(req, res, next) {
   try {
-    const [users] = await pool.execute(
-      'SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at DESC'
-    );
+    const { role } = req.user;
+
+    let sql = 'SELECT id, name, email, role, is_active, created_at FROM users';
+    const params = [];
+
+    if (role === 'trainer') {
+      sql += ' WHERE role = "member" AND is_active = 1';
+    }
+
+    sql += ' ORDER BY created_at DESC';
+
+    const [users] = await pool.execute(sql, params);
 
     return res.status(200).json({
       ok: true,
