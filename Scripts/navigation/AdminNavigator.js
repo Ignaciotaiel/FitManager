@@ -1,0 +1,33 @@
+import React from 'react';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { AdminDashboardScreen } from '../../Pages/admin/AdminDashboardScreen.js';
+import { UsersScreen } from '../../Pages/admin/UsersScreen.js';
+import { MembershipsScreen } from '../../Pages/admin/MembershipsScreen.js';
+import { ExercisesScreen } from '../../Pages/common/ExercisesScreen.js';
+import { RoutineDetailScreen } from '../../Pages/common/RoutineDetailScreen.js';
+import { useTheme } from '../../contexto/themeContext.js';
+
+const Stack = createNativeStackNavigator();
+
+export function AdminNavigator() {
+  const { colors } = useTheme();
+
+  return (
+    <Stack.Navigator
+      initialRouteName="AdminDashboard"
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: colors.background },
+        animation: 'slide_from_right'
+      }}
+    >
+      <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+      <Stack.Screen name="Users" component={UsersScreen} />
+      <Stack.Screen name="Memberships" component={MembershipsScreen} />
+      <Stack.Screen name="Exercises" component={ExercisesScreen} />
+      <Stack.Screen name="RoutineDetail" component={RoutineDetailScreen} />
+    </Stack.Navigator>
+  );
+}
+
+export default AdminNavigator;

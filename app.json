@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "FitManager",
+    "slug": "fitmanager",
+    "scheme": "fitmanager",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "com.ignaciotaiel.fitmanager",
+      "adaptiveIcon": {
+        "backgroundColor": "#0b0b0b",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "INTERNET"
+      ]
+    },
+    "plugins": [
+      "expo-secure-store",
+      "@react-native-google-signin/google-signin"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "de318f5d-a5a7-44f6-bf0f-81f4059d687e"
+      }
+    }
+  }
+}
