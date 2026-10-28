@@ -457,7 +457,7 @@ export async function updateRoutine(req, res, next) {
       });
     }
 
-    const { name, description, member_id, member_ids } = req.body;
+    const { name, description, member_id, member_ids, exercises } = req.body;
 
     let newName = current.name;
     if (name !== undefined) {
@@ -520,6 +520,57 @@ export async function updateRoutine(req, res, next) {
       }
     }
 
+    // Procesar y validar ejercicios si se enviaron
+    const shouldUpdateExercises = exercises !== undefined;
+    const cleanExercises = [];
+
+    if (shouldUpdateExercises) {
+      if (!Array.isArray(exercises)) {
+        return res.status(400).json({
+          ok: false,
+          error: { message: 'exercises debe ser una lista de ejercicios', code: 'INVALID_EXERCISES_PAYLOAD' }
+        });
+      }
+
+      for (let i = 0; i < exercises.length; i++) {
+        const item = exercises[i];
+        const exId = Number(item.exercise_id);
+        if (!Number.isInteger(exId) || exId <= 0) {
+          return res.status(400).json({
+            ok: false,
+            error: { message: `el ejercicio en posicion ${i + 1} no tiene un id valido`, code: 'INVALID_EXERCISE_ID' }
+          });
+        }
+
+        const sets = Number(item.sets_count);
+        const reps = item.reps ? String(item.reps).trim() : '10-12';
+        const pos = Number(item.position);
+
+        cleanExercises.push({
+          exercise_id: exId,
+          sets_count: Number.isInteger(sets) && sets > 0 ? sets : 3,
+          reps: reps.length > 0 ? reps : '10-12',
+          position: Number.isInteger(pos) && pos > 0 ? pos : i + 1
+        });
+      }
+
+      if (cleanExercises.length > 0) {
+        const ids = [...new Set(cleanExercises.map((e) => e.exercise_id))];
+        const placeholders = ids.map(() => '?').join(',');
+        const [found] = await pool.execute(
+          `SELECT id FROM exercises WHERE id IN (${placeholders})`,
+          ids
+        );
+
+        if (found.length !== ids.length) {
+          return res.status(400).json({
+            ok: false,
+            error: { message: 'uno o mas ejercicios indicados no existen en la base de datos', code: 'EXERCISE_NOT_FOUND' }
+          });
+        }
+      }
+    }
+
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
@@ -541,6 +592,17 @@ export async function updateRoutine(req, res, next) {
       }
     }
 
+    if (shouldUpdateExercises) {
+      // Reemplazo atómico de ejercicios de la rutina
+      await connection.execute('DELETE FROM routine_exercises WHERE routine_id = ?', [routineId]);
+      for (const ex of cleanExercises) {
+        await connection.execute(
+          'INSERT INTO routine_exercises (routine_id, exercise_id, sets_count, reps, position) VALUES (?, ?, ?, ?, ?)',
+          [routineId, ex.exercise_id, ex.sets_count, ex.reps, ex.position]
+        );
+      }
+    }
+
     await connection.commit();
 
     return res.status(200).json({
@@ -553,7 +615,8 @@ export async function updateRoutine(req, res, next) {
           description: newDesc,
           trainer_id: current.trainer_id,
           member_id: legacyMemberId,
-          assigned_count: targetMemberIds.length
+          assigned_count: targetMemberIds.length,
+          exercises_count: shouldUpdateExercises ? cleanExercises.length : undefined
         }
       }
     });

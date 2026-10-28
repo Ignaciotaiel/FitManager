@@ -125,7 +125,7 @@ export function TrainerDashboardScreen({ navigation }) {
   };
 
   // abrir modal para editar rutina
-  const handleOpenEdit = (routine) => {
+  const handleOpenEdit = async (routine) => {
     setEditingRoutine(routine);
     setFormName(routine.name || '');
     setFormDesc(routine.description || '');
@@ -137,9 +137,40 @@ export function TrainerDashboardScreen({ navigation }) {
     
     setSelectedMemberIds(currentAssignedIds);
     setMemberSearchQuery('');
-    setSelectedExercises([]);
     setFormError(null);
     setModalVisible(true);
+
+    // Si la rutina ya viene con lista de ejercicios, precargarlos; si no, buscarlos por getRoutineById
+    if (Array.isArray(routine.exercises) && routine.exercises.length > 0) {
+      setSelectedExercises(
+        routine.exercises.map((e, idx) => ({
+          exercise_id: e.exercise_id,
+          name: e.name || 'ejercicio',
+          sets_count: e.sets_count || 3,
+          reps: e.reps || '10-12',
+          position: e.position || idx + 1
+        }))
+      );
+    } else {
+      setSelectedExercises([]);
+      try {
+        const detailRes = await routineService.getRoutineById(routine.id, token);
+        if (detailRes?.ok && Array.isArray(detailRes?.data?.routine?.exercises)) {
+          setSelectedExercises(
+            detailRes.data.routine.exercises.map((e, idx) => ({
+              exercise_id: e.exercise_id,
+              name: e.name || 'ejercicio',
+              sets_count: e.sets_count || 3,
+              reps: e.reps || '10-12',
+              position: e.position || idx + 1
+            }))
+          );
+        }
+      } catch (err) {
+        // no bloquear la edicion si falla temporalmente, pero reportar error en el formulario si es necesario
+        console.warn('no se pudieron cargar los ejercicios previos de la rutina', err);
+      }
+    }
   };
 
   // toggle seleccion de socio
@@ -181,6 +212,20 @@ export function TrainerDashboardScreen({ navigation }) {
     );
   };
 
+  // mover orden de un ejercicio hacia arriba o abajo
+  const handleMoveExercise = (index, direction) => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= selectedExercises.length) return;
+
+    setSelectedExercises(prev => {
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return copy.map((item, idx) => ({ ...item, position: idx + 1 }));
+    });
+  };
+
   // actualizar series o repeticiones de un ejercicio seleccionado
   const handleUpdateExerciseParam = (exerciseId, field, val) => {
     setSelectedExercises((prev) =>
@@ -203,30 +248,31 @@ export function TrainerDashboardScreen({ navigation }) {
     setFormLoading(true);
     setFormError(null);
 
+    const formattedExercises = selectedExercises.map((e, index) => ({
+      exercise_id: e.exercise_id,
+      sets_count: Number(e.sets_count) || 3,
+      reps: String(e.reps || '10-12').trim(),
+      position: index + 1
+    }));
+
     try {
       if (editingRoutine) {
-        // edicion de metadatos y asignaciones mediante PATCH /api/routines/:id
+        // edicion de metadatos, asignaciones y ejercicios mediante PATCH /api/routines/:id
         const patchPayload = {
           name: formName.trim(),
           description: formDesc.trim() || null,
-          member_ids: selectedMemberIds
+          member_ids: selectedMemberIds,
+          exercises: formattedExercises
         };
 
         const res = await routineService.updateRoutine(editingRoutine.id, patchPayload, token);
         if (res?.ok) {
-          setSuccessMessage(`rutina "${formName.trim()}" actualizada con éxito (${selectedMemberIds.length} socios asignados)`);
+          setSuccessMessage(`rutina "${formName.trim()}" actualizada con éxito (${selectedMemberIds.length} socios asignados, ${formattedExercises.length} ejercicios)`);
           setModalVisible(false);
           loadData();
         }
       } else {
         // creacion de rutina con ejercicios reales mediante POST /api/routines
-        const formattedExercises = selectedExercises.map((e, index) => ({
-          exercise_id: e.exercise_id,
-          sets_count: Number(e.sets_count) || 3,
-          reps: String(e.reps || '10-12').trim(),
-          position: index + 1
-        }));
-
         const createPayload = {
           name: formName.trim(),
           description: formDesc.trim() || null,
@@ -237,7 +283,7 @@ export function TrainerDashboardScreen({ navigation }) {
         const res = await routineService.createRoutine(createPayload, token);
 
         if (res?.ok && res?.data?.routine) {
-          setSuccessMessage(`rutina "${res.data.routine.name}" creada con éxito (${selectedMemberIds.length} socios asignados)`);
+          setSuccessMessage(`rutina "${res.data.routine.name}" creada con éxito (${selectedMemberIds.length} socios asignados, ${formattedExercises.length} ejercicios)`);
           setModalVisible(false);
           loadData();
         }
@@ -484,99 +530,117 @@ export function TrainerDashboardScreen({ navigation }) {
                   </View>
                 </View>
 
-                {/* selector de ejercicios solo en creacion */}
-                {!editingRoutine && (
-                  <View style={styles.exerciseSelectorSection}>
-                    <Text style={[styles.subSectionTitle, { color: colors.text }]}>
-                      EJERCICIOS SELECCIONADOS ({selectedExercises.length})
+                {/* selector de ejercicios para creacion y edicion */}
+                <View style={styles.exerciseSelectorSection}>
+                  <Text style={[styles.subSectionTitle, { color: colors.text }]}>
+                    EJERCICIOS SELECCIONADOS ({selectedExercises.length})
+                  </Text>
+
+                  {selectedExercises.length === 0 ? (
+                    <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
+                      tocá un ejercicio de la lista inferior para agregarlo a esta rutina.
                     </Text>
-
-                    {selectedExercises.length === 0 ? (
-                      <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
-                        tocá un ejercicio de la lista inferior para agregarlo a esta rutina.
-                      </Text>
-                    ) : (
-                      selectedExercises.map((item, index) => (
-                        <View key={String(item.exercise_id)} style={[styles.selectedItemBox, { borderColor: colors.border }]}>
-                          <View style={styles.selectedItemTop}>
-                            <Text style={[styles.selectedItemName, { color: colors.text }]}>
-                              #{index + 1} {item.name}
-                            </Text>
+                  ) : (
+                    selectedExercises.map((item, index) => (
+                      <View key={String(item.exercise_id)} style={[styles.selectedItemBox, { borderColor: colors.border }]}>
+                        <View style={styles.selectedItemTop}>
+                          <Text style={[styles.selectedItemName, { color: colors.text }]}>
+                            #{index + 1} {item.name}
+                          </Text>
+                          <View style={styles.itemActionsRow}>
+                            {index > 0 && (
+                              <TouchableOpacity
+                                onPress={() => handleMoveExercise(index, 'up')}
+                                style={styles.reorderBtn}
+                                accessibilityLabel="mover arriba"
+                              >
+                                <Text style={[styles.reorderText, { color: colors.primary }]}>▲</Text>
+                              </TouchableOpacity>
+                            )}
+                            {index < selectedExercises.length - 1 && (
+                              <TouchableOpacity
+                                onPress={() => handleMoveExercise(index, 'down')}
+                                style={styles.reorderBtn}
+                                accessibilityLabel="mover abajo"
+                              >
+                                <Text style={[styles.reorderText, { color: colors.primary }]}>▼</Text>
+                              </TouchableOpacity>
+                            )}
                             <TouchableOpacity onPress={() => handleRemoveExercise(item.exercise_id)}>
-                              <Text style={[styles.removeText, { color: colors.danger }]}>QUITAR</Text>
+                              <Text style={[styles.removeText, { color: colors.danger, marginLeft: 8 }]}>QUITAR</Text>
                             </TouchableOpacity>
-                          </View>
-
-                          <View style={styles.paramInputsRow}>
-                            <View style={styles.paramInputWrapper}>
-                              <Text style={[styles.paramInputLabel, { color: colors.textSecondary }]}>SERIES</Text>
-                              <Input
-                                value={String(item.sets_count)}
-                                onChangeText={(val) => handleUpdateExerciseParam(item.exercise_id, 'sets_count', val)}
-                                keyboardType="numeric"
-                                style={{ marginVertical: 0 }}
-                              />
-                            </View>
-
-                            <View style={styles.paramInputWrapper}>
-                              <Text style={[styles.paramInputLabel, { color: colors.textSecondary }]}>REPETICIONES</Text>
-                              <Input
-                                value={item.reps}
-                                onChangeText={(val) => handleUpdateExerciseParam(item.exercise_id, 'reps', val)}
-                                placeholder="ej. 10-12"
-                                style={{ marginVertical: 0 }}
-                              />
-                            </View>
                           </View>
                         </View>
-                      ))
-                    )}
 
-                    <Text style={[styles.subSectionTitle, { color: colors.text, marginTop: 14 }]}>
-                      BIBLIOTECA DISPONIBLE PARA AGREGAR
+                        <View style={styles.paramInputsRow}>
+                          <View style={styles.paramInputWrapper}>
+                            <Text style={[styles.paramInputLabel, { color: colors.textSecondary }]}>SERIES</Text>
+                            <Input
+                              value={String(item.sets_count)}
+                              onChangeText={(val) => handleUpdateExerciseParam(item.exercise_id, 'sets_count', val)}
+                              keyboardType="numeric"
+                              style={{ marginVertical: 0 }}
+                            />
+                          </View>
+
+                          <View style={styles.paramInputWrapper}>
+                            <Text style={[styles.paramInputLabel, { color: colors.textSecondary }]}>REPETICIONES</Text>
+                            <Input
+                              value={item.reps}
+                              onChangeText={(val) => handleUpdateExerciseParam(item.exercise_id, 'reps', val)}
+                              placeholder="ej. 10-12"
+                              style={{ marginVertical: 0 }}
+                            />
+                          </View>
+                        </View>
+                      </View>
+                    ))
+                  )}
+
+                  <Text style={[styles.subSectionTitle, { color: colors.text, marginTop: 14 }]}>
+                    BIBLIOTECA DISPONIBLE PARA AGREGAR
+                  </Text>
+
+                  {exercisesLibrary.length === 0 ? (
+                    <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
+                      no hay ejercicios en la biblioteca. creá uno primero desde el panel.
                     </Text>
-
-                    {exercisesLibrary.length === 0 ? (
-                      <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
-                        no hay ejercicios en la biblioteca. creá uno primero desde el panel.
-                      </Text>
-                    ) : (
-                      <View style={styles.libraryPicker}>
-                        {exercisesLibrary.map((ex) => {
-                          const isAlreadyAdded = selectedExercises.some((s) => s.exercise_id === ex.id);
-                          return (
-                            <TouchableOpacity
-                              key={String(ex.id)}
-                              onPress={() => handleAddExerciseToRoutine(ex)}
-                              disabled={isAlreadyAdded}
+                  ) : (
+                    <View style={styles.libraryPicker}>
+                      {exercisesLibrary.map((ex) => {
+                        const isAlreadyAdded = selectedExercises.some((s) => s.exercise_id === ex.id);
+                        return (
+                          <TouchableOpacity
+                            key={String(ex.id)}
+                            onPress={() => handleAddExerciseToRoutine(ex)}
+                            disabled={isAlreadyAdded}
+                            style={[
+                              styles.pickItemBtn,
+                              {
+                                borderColor: isAlreadyAdded ? colors.primary : colors.border,
+                                backgroundColor: isAlreadyAdded ? 'rgba(57, 255, 20, 0.1)' : colors.surface
+                              }
+                            ]}
+                          >
+                            <Text
                               style={[
-                                styles.pickItemBtn,
-                                {
-                                  borderColor: isAlreadyAdded ? colors.primary : colors.border,
-                                  backgroundColor: isAlreadyAdded ? 'rgba(57, 255, 20, 0.1)' : colors.surface
-                                }
+                                styles.pickItemText,
+                                { color: isAlreadyAdded ? colors.primary : colors.text }
                               ]}
                             >
-                              <Text
-                                style={[
-                                  styles.pickItemText,
-                                  { color: isAlreadyAdded ? colors.primary : colors.text }
-                                ]}
-                              >
-                                {isAlreadyAdded ? `✓ ${ex.name}` : `+ ${ex.name}`}
+                              {isAlreadyAdded ? `✓ ${ex.name}` : `+ ${ex.name}`}
+                            </Text>
+                            {ex.muscle_group ? (
+                              <Text style={[styles.pickItemSub, { color: colors.textMuted }]}>
+                                {ex.muscle_group}
                               </Text>
-                              {ex.muscle_group ? (
-                                <Text style={[styles.pickItemSub, { color: colors.textMuted }]}>
-                                  {ex.muscle_group}
-                                </Text>
-                              ) : null}
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    )}
-                  </View>
-                )}
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
 
                 <View style={styles.modalActions}>
                   <Button
@@ -786,6 +850,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 6
+  },
+  itemActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  reorderBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 2
+  },
+  reorderText: {
+    fontSize: 14,
+    fontWeight: '800'
   },
   selectedItemName: {
     fontSize: 14,

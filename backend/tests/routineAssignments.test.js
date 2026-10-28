@@ -135,6 +135,51 @@ describe('Pruebas de Asignación Multi-Socio y Aislamiento de Historiales de Ent
       return res.status(200).json({ ok: true, message: 'desasignado' });
     });
 
+    // PATCH /api/routines/:id (Actualizar rutina y ejercicios)
+    app.patch('/api/routines/:id', testVerifyToken, testRequireRole('admin', 'trainer'), (req, res) => {
+      const routineId = Number(req.params.id);
+      const routine = mockRoutines.find(r => r.id === routineId);
+      if (!routine) return res.status(404).json({ ok: false, error: { message: 'rutina no existe' } });
+      if (req.user.role === 'trainer' && routine.trainer_id !== req.user.id) {
+        return res.status(403).json({ ok: false, error: { message: 'no es tu rutina', code: 'FORBIDDEN' } });
+      }
+      const { name, exercises } = req.body;
+      if (name) routine.name = name;
+      if (Array.isArray(exercises)) {
+        routine.exercises = exercises.map((e, idx) => ({
+          routine_exercise_id: idx + 1,
+          exercise_id: e.exercise_id,
+          sets_count: e.sets_count || 3,
+          reps: e.reps || '10-12',
+          position: e.position || idx + 1
+        }));
+      }
+      return res.status(200).json({ ok: true, data: { routine } });
+    });
+
+    // GET /api/routines/:id (Detalle de rutina con ejercicios)
+    app.get('/api/routines/:id', testVerifyToken, (req, res) => {
+      const routineId = Number(req.params.id);
+      const routine = mockRoutines.find(r => r.id === routineId);
+      if (!routine) return res.status(404).json({ ok: false, error: { message: 'rutina no existe' } });
+      const { role, id: userId } = req.user;
+      if (role === 'member') {
+        const isAssigned = mockAssignments.some(a => a.routine_id === routine.id && a.member_id === userId) || routine.member_id === userId;
+        if (!isAssigned) {
+          return res.status(403).json({ ok: false, error: { message: 'prohibido' } });
+        }
+      }
+      return res.status(200).json({
+        ok: true,
+        data: {
+          routine: {
+            ...routine,
+            exercises: routine.exercises || []
+          }
+        }
+      });
+    });
+
     // 4. POST /api/workouts/sessions (Con validación multi-socio)
     app.post('/api/workouts/sessions', testVerifyToken, testRequireRole('member', 'admin'), (req, res) => {
       const userId = req.user.id;
@@ -333,5 +378,36 @@ describe('Pruebas de Asignación Multi-Socio y Aislamiento de Historiales de Ent
     const jsonHistory = await resHistory.json();
     assert.strictEqual(jsonHistory.data.sessions.length, 1);
     assert.strictEqual(jsonHistory.data.sessions[0].sets[0].weight_kg, 50);
+  });
+
+  test('8. Entrenador actualiza ejercicios de la rutina y los socios asignados ven los ejercicios actualizados', async () => {
+    const tokenTrainer = makeToken(mockUsers[1]); // Trainer Frank (2)
+    const tokenCarlos = makeToken(mockUsers[2]); // Member Carlos (3)
+
+    // Entrenador actualiza la rutina 101 agregando ejercicios
+    const resUpdate = await fetch(`${baseUrl}/api/routines/101`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({
+        name: 'Rutina Full Body Modificada',
+        exercises: [
+          { exercise_id: 1, sets_count: 4, reps: '8-10', position: 1 },
+          { exercise_id: 2, sets_count: 3, reps: '12', position: 2 }
+        ]
+      })
+    });
+    assert.strictEqual(resUpdate.status, 200);
+
+    // Carlos consulta la rutina y ve los 2 ejercicios con sus series y repeticiones
+    const resGet = await fetch(`${baseUrl}/api/routines/101`, {
+      headers: { Authorization: `Bearer ${tokenCarlos}` }
+    });
+    const jsonGet = await resGet.json();
+    assert.strictEqual(resGet.status, 200);
+    assert.strictEqual(jsonGet.data.routine.name, 'Rutina Full Body Modificada');
+    assert.strictEqual(jsonGet.data.routine.exercises.length, 2);
+    assert.strictEqual(jsonGet.data.routine.exercises[0].exercise_id, 1);
+    assert.strictEqual(jsonGet.data.routine.exercises[0].sets_count, 4);
+    assert.strictEqual(jsonGet.data.routine.exercises[1].exercise_id, 2);
   });
 });
