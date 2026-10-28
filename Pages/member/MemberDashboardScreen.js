@@ -11,7 +11,6 @@ import {
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { routineService } from '../../Modules/routines/routineService.js';
-import { membershipService } from '../../Modules/memberships/membershipService.js';
 import {
   DashboardHeader,
   Card,
@@ -26,25 +25,18 @@ export function MemberDashboardScreen({ navigation }) {
   const { token, user } = useAuth();
 
   const [routines, setRoutines] = useState([]);
-  const [membership, setMembership] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
 
-  // el backend filtra por WHERE member_id = req.user.id y /memberships/my
+  // el backend filtra por WHERE member_id = req.user.id
   const loadDashboardData = useCallback(async () => {
     try {
       setErrorMessage(null);
-      const [routineRes, memRes] = await Promise.all([
-        routineService.getRoutines(token),
-        membershipService.getMyMembership(token)
-      ]);
+      const routineRes = await routineService.getRoutines(token);
 
       if (routineRes?.ok && Array.isArray(routineRes?.data?.routines)) {
         setRoutines(routineRes.data.routines);
-      }
-      if (memRes?.ok) {
-        setMembership(memRes.data.membership);
       }
     } catch (error) {
       if (error.code === 'NETWORK_ERROR') {
@@ -116,87 +108,8 @@ export function MemberDashboardScreen({ navigation }) {
           style={styles.libBtn}
         />
 
-        {/* estado de membresia real */}
-        <Card style={styles.membershipCard}>
-          <View style={styles.membershipHeader}>
-            <Text style={[styles.membershipTitle, { color: colors.text }]}>
-              ESTADO DE TU MEMBRESÍA
-            </Text>
-            {membership ? (
-              <View
-                style={[
-                  styles.membershipBadge,
-                  {
-                    backgroundColor:
-                      membership.status === 'active'
-                        ? 'rgba(16, 185, 129, 0.15)'
-                        : membership.status === 'expired'
-                        ? 'rgba(239, 68, 68, 0.15)'
-                        : 'rgba(148, 163, 184, 0.15)'
-                  }
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.membershipBadgeText,
-                    {
-                      color:
-                        membership.status === 'active'
-                          ? colors.success || '#10b981'
-                          : membership.status === 'expired'
-                          ? colors.danger || '#ef4444'
-                          : colors.textMuted || '#94a3b8'
-                    }
-                  ]}
-                >
-                  {membership.status === 'active'
-                    ? 'ACTIVA'
-                    : membership.status === 'expired'
-                    ? 'VENCIDA'
-                    : 'CANCELADA'}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          {membership ? (
-            <View style={styles.membershipDatesRow}>
-              <View style={styles.membershipDateCol}>
-                <Text style={[styles.membershipDateLabel, { color: colors.textMuted }]}>
-                  INICIO DEL PLAN
-                </Text>
-                <Text style={[styles.membershipDateValue, { color: colors.text }]}>
-                  {membership.start_date || '—'}
-                </Text>
-              </View>
-              <View style={styles.membershipDateCol}>
-                <Text style={[styles.membershipDateLabel, { color: colors.textMuted }]}>
-                  VENCE EL
-                </Text>
-                <Text
-                  style={[
-                    styles.membershipDateValue,
-                    {
-                      color:
-                        membership.status === 'expired'
-                          ? colors.danger || '#ef4444'
-                          : colors.primary
-                    }
-                  ]}
-                >
-                  {membership.end_date || 'sin límite'}
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <Text style={[styles.noMembershipText, { color: colors.textSecondary }]}>
-              no posees una membresía activa registrada actualmente. consulta en recepción o con tu administrador para renovar o activar tu plan.
-            </Text>
-          )}
-        </Card>
-
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          RUTINAS ASIGNADAS A TU PLAN ({routines.length})
+          RUTINAS ASIGNADAS ({routines.length})
         </Text>
 
         {loading ? (
@@ -213,7 +126,7 @@ export function MemberDashboardScreen({ navigation }) {
             ListEmptyComponent={
               <EmptyState
                 title="sin rutinas asignadas"
-                description="tu entrenador aún no te asignó un plan de entrenamiento activo. consultá periódicamente para ver tus ejercicios."
+                description="tu entrenador aún no te asignó una rutina activa. consultá periódicamente para ver tus ejercicios."
               />
             }
           />
@@ -265,55 +178,6 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   routineBtn: {
-    marginTop: 4
-  },
-  membershipCard: {
-    marginVertical: 10,
-    padding: 16
-  },
-  membershipHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10
-  },
-  membershipTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  membershipBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6
-  },
-  membershipBadgeText: {
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  membershipDatesRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.1)'
-  },
-  membershipDateCol: {
-    flex: 1
-  },
-  membershipDateLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  membershipDateValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 2
-  },
-  noMembershipText: {
-    fontSize: 12,
-    lineHeight: 18,
     marginTop: 4
   }
 });

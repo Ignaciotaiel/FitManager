@@ -2,7 +2,6 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AdminDashboardScreen } from '../../Pages/admin/AdminDashboardScreen.js';
 import { UsersScreen } from '../../Pages/admin/UsersScreen.js';
-import { MembershipsScreen } from '../../Pages/admin/MembershipsScreen.js';
 import { ExercisesScreen } from '../../Pages/common/ExercisesScreen.js';
 import { RoutineDetailScreen } from '../../Pages/common/RoutineDetailScreen.js';
 import { useTheme } from '../../contexto/themeContext.js';
@@ -23,7 +22,6 @@ export function AdminNavigator() {
     >
       <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       <Stack.Screen name="Users" component={UsersScreen} />
-      <Stack.Screen name="Memberships" component={MembershipsScreen} />
       <Stack.Screen name="Exercises" component={ExercisesScreen} />
       <Stack.Screen name="RoutineDetail" component={RoutineDetailScreen} />
     </Stack.Navigator>

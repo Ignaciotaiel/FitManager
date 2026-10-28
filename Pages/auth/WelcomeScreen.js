@@ -73,9 +73,9 @@ export function WelcomeScreen({ navigation }) {
             <View style={styles.featureItem}>
               <Text style={[styles.featureBullet, { color: colors.primary }]}>03</Text>
               <View style={styles.featureTextWrapper}>
-                <Text style={[styles.featureTitle, { color: colors.text }]}>control de membresías</Text>
+                <Text style={[styles.featureTitle, { color: colors.text }]}>gestión y seguimiento</Text>
                 <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
-                  estado y vigencia en tiempo real
+                  control de cuentas y entrenamiento activo
                 </Text>
               </View>
             </View>

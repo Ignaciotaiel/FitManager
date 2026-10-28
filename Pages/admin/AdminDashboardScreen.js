@@ -132,23 +132,6 @@ export function AdminDashboardScreen({ navigation }) {
               />
             </Card>
 
-            {/* acceso directo a la gestion de membresias */}
-            <Card style={[styles.actionCard, { marginTop: 14 }]}>
-              <View style={styles.actionCardHeader}>
-                <Text style={[styles.cardTitle, { color: colors.text }]}>
-                  control de membresías y vigencias
-                </Text>
-                <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
-                  asigná planes a socios, consultá vencimientos y renová períodos activos.
-                </Text>
-              </View>
-              <Button
-                title="GESTIONAR MEMBRESÍAS"
-                variant="primary"
-                onPress={() => navigation.navigate('Memberships')}
-              />
-            </Card>
-
             {/* acceso directo a la biblioteca de ejercicios */}
             <Card style={[styles.actionCard, { marginTop: 14 }]}>
               <View style={styles.actionCardHeader}>
