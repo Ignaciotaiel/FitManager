@@ -370,7 +370,7 @@ export async function verifyGoogleAuth(req, res, next) {
 
     // 1. Verificar si ya existe en social_accounts
     const [socialRows] = await connection.execute(
-      `SELECT sa.id, sa.user_id, u.id AS uid, u.name, u.email, u.role, u.is_active
+      `SELECT sa.id AS social_account_id, u.id AS id, u.name, u.email, u.role, u.is_active
        FROM social_accounts sa
        INNER JOIN users u ON sa.user_id = u.id
        WHERE sa.provider = 'google' AND sa.provider_user_id = ?`,
