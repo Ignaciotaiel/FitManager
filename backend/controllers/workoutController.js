@@ -51,6 +51,21 @@ async function checkHasWorkoutTables() {
   }
 }
 
+// Helper para saber si la columna status existe en workout_sessions
+let hasSessionStatusCache = null;
+async function checkHasSessionStatus() {
+  if (hasSessionStatusCache !== null) return hasSessionStatusCache;
+  try {
+    const [rows] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'workout_sessions' AND COLUMN_NAME = 'status'"
+    );
+    hasSessionStatusCache = rows.length > 0;
+    return hasSessionStatusCache;
+  } catch (e) {
+    return false;
+  }
+}
+
 /**
  * Comprobar si un entrenador tiene permiso para ver el historial de un socio.
  * Un entrenador solo puede ver el progreso de un socio si tiene al menos una rutina asignada a él
@@ -222,10 +237,101 @@ export async function createSession(req, res, next) {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    const [sessionRes] = await connection.execute(
-      'INSERT INTO workout_sessions (user_id, routine_id, session_date, notes) VALUES (?, ?, ?, ?)',
-      [userId, validatedRoutineId, validatedDate, cleanNotes]
-    );
+    const hasStatus = await checkHasSessionStatus();
+
+    // Bloqueo de concurrencia a nivel de usuario y rutina con GET_LOCK de MariaDB:
+    // Serializa peticiones concurrentes antes de que exista la fila, contemplando routine_id null (sesión libre)
+    let lockName = null;
+    let lockAcquired = false;
+
+    if (hasStatus) {
+      const routineKey = validatedRoutineId !== null ? `r${validatedRoutineId}` : 'free';
+      lockName = `workout_lock_u${userId}_${routineKey}`;
+      const [lockRows] = await connection.execute('SELECT GET_LOCK(?, 5) AS lock_ok', [lockName]);
+      lockAcquired = lockRows.length > 0 && lockRows[0].lock_ok === 1;
+
+      // Si no se pudo adquirir el cerrojo tras 5 segundos (por timeout o error), abortar de forma segura
+      if (!lockAcquired) {
+        await connection.rollback();
+        return res.status(409).json({
+          ok: false,
+          error: {
+            message: 'operación en curso. por favor aguarda un instante y reintenta',
+            code: 'CONCURRENT_REQUEST_TIMEOUT'
+          }
+        });
+      }
+
+      // Una vez obtenido el lock exclusivo en MariaDB para este usuario y rutina (o sesión libre):
+      let activeQuery = "SELECT id, user_id, routine_id, session_date, status, notes FROM workout_sessions WHERE user_id = ? AND status = 'in_progress'";
+      const activeParams = [userId];
+
+      if (validatedRoutineId !== null) {
+        activeQuery += ' AND routine_id = ?';
+        activeParams.push(validatedRoutineId);
+      } else {
+        activeQuery += ' AND routine_id IS NULL';
+      }
+
+      activeQuery += ' ORDER BY created_at DESC, id DESC LIMIT 1';
+
+      const [existingActive] = await connection.execute(activeQuery, activeParams);
+
+      if (existingActive.length > 0) {
+        const active = existingActive[0];
+
+        // Separación estricta de responsabilidades:
+        // Si la sesión ya existe (por ejemplo, reintento de red o doble toque al iniciar),
+        // NUNCA se vuelven a insertar las series para evitar duplicación.
+        // La sesión se devuelve tal como está para que el cliente continúe desde su estado real.
+        const [existingSets] = await connection.execute(
+          `SELECT 
+            sl.id, 
+            sl.session_id, 
+            sl.exercise_id, 
+            sl.routine_exercise_id,
+            sl.set_number, 
+            sl.weight_kg, 
+            sl.reps_completed, 
+            sl.rpe, 
+            sl.created_at,
+            e.name AS exercise_name,
+            e.muscle_group
+          FROM workout_set_logs sl
+          INNER JOIN exercises e ON sl.exercise_id = e.id
+          WHERE sl.session_id = ?
+          ORDER BY sl.exercise_id ASC, sl.set_number ASC`,
+          [active.id]
+        );
+
+        await connection.commit();
+
+        return res.status(200).json({
+          ok: true,
+          message: 'sesion de entrenamiento activa recuperada',
+          data: {
+            session: {
+              ...active,
+              sets_count: existingSets.length,
+              sets: existingSets
+            }
+          }
+        });
+      }
+    }
+
+    let sessionRes;
+    if (hasStatus) {
+      [sessionRes] = await connection.execute(
+        "INSERT INTO workout_sessions (user_id, routine_id, session_date, status, notes) VALUES (?, ?, ?, 'in_progress', ?)",
+        [userId, validatedRoutineId, validatedDate, cleanNotes]
+      );
+    } else {
+      [sessionRes] = await connection.execute(
+        'INSERT INTO workout_sessions (user_id, routine_id, session_date, notes) VALUES (?, ?, ?, ?)',
+        [userId, validatedRoutineId, validatedDate, cleanNotes]
+      );
+    }
 
     const sessionId = sessionRes.insertId;
 
@@ -260,7 +366,14 @@ export async function createSession(req, res, next) {
     if (connection) await connection.rollback();
     next(error);
   } finally {
-    if (connection) connection.release();
+    if (connection) {
+      try {
+        if (lockAcquired && lockName) {
+          await connection.execute('SELECT RELEASE_LOCK(?)', [lockName]);
+        }
+      } catch (e) {}
+      connection.release();
+    }
   }
 }
 
@@ -281,11 +394,13 @@ export async function addSetToSession(req, res, next) {
       });
     }
 
+    const hasStatus = await checkHasSessionStatus();
+    let sessionQuery = 'SELECT id, user_id';
+    if (hasStatus) sessionQuery += ', status';
+    sessionQuery += ' FROM workout_sessions WHERE id = ? LIMIT 1';
+
     // Verificar que la sesion exista y pertenezca estrictamente al usuario
-    const [sessions] = await pool.execute(
-      'SELECT id, user_id FROM workout_sessions WHERE id = ? LIMIT 1',
-      [parsedSessionId]
-    );
+    const [sessions] = await pool.execute(sessionQuery, [parsedSessionId]);
 
     if (sessions.length === 0) {
       return res.status(404).json({
@@ -298,6 +413,14 @@ export async function addSetToSession(req, res, next) {
       return res.status(403).json({
         ok: false,
         error: { message: 'no tienes permiso para agregar series a esta sesion', code: 'FORBIDDEN' }
+      });
+    }
+
+    // Impedir agregar series si la sesion ya fue finalizada
+    if (hasStatus && sessions[0].status === 'completed') {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'la sesion ya ha sido finalizada y no puede recibir nuevas series', code: 'SESSION_COMPLETED' }
       });
     }
 
@@ -686,6 +809,18 @@ export async function updateSet(req, res, next) {
       });
     }
 
+    // Impedir editar series si la sesion ya fue finalizada
+    const [parentSession] = await pool.execute(
+      'SELECT s.status FROM workout_sessions s INNER JOIN workout_set_logs l ON l.session_id = s.id WHERE l.id = ? LIMIT 1',
+      [setId]
+    );
+    if (parentSession.length > 0 && parentSession[0].status === 'completed') {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'no se pueden modificar series de una sesion finalizada', code: 'SESSION_COMPLETED' }
+      });
+    }
+
     const current = existing[0];
     const { weight_kg, reps_completed, rpe, set_number } = req.body;
 
@@ -784,12 +919,192 @@ export async function deleteSet(req, res, next) {
       });
     }
 
+    // Impedir eliminar series si la sesion ya fue finalizada
+    const [parentSession] = await pool.execute(
+      'SELECT s.status FROM workout_sessions s INNER JOIN workout_set_logs l ON l.session_id = s.id WHERE l.id = ? LIMIT 1',
+      [setId]
+    );
+    if (parentSession.length > 0 && parentSession[0].status === 'completed') {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'no se pueden eliminar series de una sesion finalizada', code: 'SESSION_COMPLETED' }
+      });
+    }
+
     await pool.execute('DELETE FROM workout_set_logs WHERE id = ?', [setId]);
 
     return res.status(200).json({
       ok: true,
       message: 'serie eliminada exitosamente',
       data: { id: setId }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ==============================================================================
+// 8. FINALIZAR UNA SESIÓN DE ENTRENAMIENTO
+// PATCH /api/workouts/sessions/:sessionId/finish
+// ==============================================================================
+export async function finishSession(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { sessionId } = req.params;
+    const parsedSessionId = Number(sessionId);
+
+    if (!Number.isInteger(parsedSessionId) || parsedSessionId <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'identificador de sesion invalido', code: 'INVALID_SESSION_ID' }
+      });
+    }
+
+    const [sessions] = await pool.execute(
+      'SELECT id, user_id, status FROM workout_sessions WHERE id = ? LIMIT 1',
+      [parsedSessionId]
+    );
+
+    if (sessions.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+      });
+    }
+
+    if (Number(sessions[0].user_id) !== Number(userId)) {
+      return res.status(403).json({
+        ok: false,
+        error: { message: 'no tienes permiso para finalizar esta sesion', code: 'FORBIDDEN' }
+      });
+    }
+
+    const hasStatus = await checkHasSessionStatus();
+    if (hasStatus) {
+      if (sessions[0].status === 'completed') {
+        return res.status(200).json({
+          ok: true,
+          message: 'la sesion ya se encontraba finalizada',
+          data: { session: sessions[0] }
+        });
+      }
+
+      await pool.execute(
+        "UPDATE workout_sessions SET status = 'completed', ended_at = NOW() WHERE id = ?",
+        [parsedSessionId]
+      );
+    }
+
+    const [updated] = await pool.execute(
+      'SELECT id, user_id, routine_id, session_date, status, ended_at, notes FROM workout_sessions WHERE id = ? LIMIT 1',
+      [parsedSessionId]
+    );
+
+    return res.status(200).json({
+      ok: true,
+      message: 'sesion de entrenamiento finalizada con exito',
+      data: {
+        session: updated[0] || { id: parsedSessionId, status: 'completed' }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ==============================================================================
+// 9. OBTENER SESIÓN ACTIVA EN CURSO DE UNA RUTINA
+// GET /api/workouts/sessions/active?routine_id=X
+// ==============================================================================
+export async function getActiveSession(req, res, next) {
+  try {
+    const userId = req.user.id;
+    const { routine_id } = req.query;
+
+    const hasWorkoutTables = await checkHasWorkoutTables();
+    if (!hasWorkoutTables) {
+      return res.status(200).json({
+        ok: true,
+        data: { active_session: null }
+      });
+    }
+
+    const hasStatus = await checkHasSessionStatus();
+    if (!hasStatus) {
+      return res.status(200).json({
+        ok: true,
+        data: { active_session: null }
+      });
+    }
+
+    // Recuperar la sesión in_progress activa cronológicamente más reciente:
+    // Se toma siempre la última sesión que el socio inició para esta rutina (o entrenamiento libre).
+    let query = `
+      SELECT 
+        ws.id, 
+        ws.user_id, 
+        ws.routine_id, 
+        ws.session_date, 
+        ws.status, 
+        ws.notes, 
+        ws.created_at
+      FROM workout_sessions ws
+      WHERE ws.user_id = ? AND ws.status = 'in_progress'
+    `;
+    const params = [userId];
+
+    if (routine_id) {
+      const parsedRoutine = Number(routine_id);
+      if (Number.isInteger(parsedRoutine) && parsedRoutine > 0) {
+        query += ' AND ws.routine_id = ?';
+        params.push(parsedRoutine);
+      }
+    } else {
+      query += ' AND ws.routine_id IS NULL';
+    }
+
+    query += ' ORDER BY ws.created_at DESC, ws.id DESC LIMIT 1';
+
+    const [sessions] = await pool.execute(query, params);
+
+    if (sessions.length === 0) {
+      return res.status(200).json({
+        ok: true,
+        data: { active_session: null }
+      });
+    }
+
+    const activeSession = sessions[0];
+
+    // Traer las series registradas en esta sesion activa
+    const [sets] = await pool.execute(
+      `SELECT 
+        sl.id, 
+        sl.session_id, 
+        sl.exercise_id, 
+        sl.routine_exercise_id,
+        sl.set_number, 
+        sl.weight_kg, 
+        sl.reps_completed, 
+        sl.rpe, 
+        sl.created_at,
+        e.name AS exercise_name,
+        e.muscle_group
+      FROM workout_set_logs sl
+      INNER JOIN exercises e ON sl.exercise_id = e.id
+      WHERE sl.session_id = ?
+      ORDER BY sl.exercise_id ASC, sl.set_number ASC`,
+      [activeSession.id]
+    );
+
+    return res.status(200).json({
+      ok: true,
+      data: {
+        active_session: {
+          ...activeSession,
+          sets: sets || []
+        }
+      }
     });
   } catch (error) {
     next(error);

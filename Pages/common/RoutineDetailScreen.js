@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   RefreshControl,
   TouchableOpacity,
@@ -11,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { routineService } from '../../Modules/routines/routineService.js';
@@ -77,33 +77,33 @@ export function RoutineDetailScreen({ route, navigation }) {
           setLastLogs(map);
         }
 
-        // Si es socio, recuperar si ya tiene una sesión abierta hoy para esta rutina
+        // Si es socio, recuperar si ya tiene una sesión abierta activa para esta rutina
         if (user?.role === 'member') {
-          workoutService.getHistory({ limit: 5 }, token)
-            .then(hRes => {
-              if (hRes?.ok && Array.isArray(hRes?.data?.sessions)) {
-                const todayPrefix = new Date().toISOString().substring(0, 10);
-                const match = hRes.data.sessions.find(s =>
-                  Number(s.routine_id) === Number(routineId) &&
-                  String(s.session_date || s.created_at).startsWith(todayPrefix)
-                );
-                if (match) {
-                  setActiveSession(match);
-                  // poblar registeredSets con las series ya guardadas
-                  if (Array.isArray(match.sets) && match.sets.length > 0) {
-                    const setsMap = {};
-                    match.sets.forEach(st => {
-                      const exTarget = res.data.routine.exercises?.find(e => e.exercise_id === st.exercise_id);
-                      const key = exTarget ? exTarget.routine_exercise_id : st.exercise_id;
-                      if (!setsMap[key]) setsMap[key] = [];
-                      setsMap[key].push(st);
-                    });
-                    setRegisteredSets(setsMap);
-                  }
-                }
+          try {
+            const aRes = await workoutService.getActiveSession(routineId, token);
+            if (aRes?.ok && aRes?.data?.active_session) {
+              const session = aRes.data.active_session;
+              setActiveSession(session);
+              // poblar registeredSets con las series ya guardadas en esta sesión activa
+              const setsMap = {};
+              if (Array.isArray(session.sets) && session.sets.length > 0) {
+                session.sets.forEach(st => {
+                  const exTarget = res.data.routine.exercises?.find(e => e.exercise_id === st.exercise_id);
+                  const key = exTarget ? exTarget.routine_exercise_id : (st.routine_exercise_id || st.exercise_id);
+                  if (!setsMap[key]) setsMap[key] = [];
+                  setsMap[key].push(st);
+                });
               }
-            })
-            .catch(() => {});
+              setRegisteredSets(setsMap);
+            } else {
+              setActiveSession(null);
+              setRegisteredSets({});
+            }
+          } catch (e) {
+            // Silencioso para no bloquear la visualización de la rutina si el endpoint falla
+            setActiveSession(null);
+            setRegisteredSets({});
+          }
         }
       }
     } catch (error) {
@@ -134,6 +134,7 @@ export function RoutineDetailScreen({ route, navigation }) {
 
   // Iniciar sesion de entrenamiento
   const handleStartWorkout = async () => {
+    if (startingSession) return;
     setStartingSession(true);
     setErrorMessage(null);
     try {
@@ -145,8 +146,44 @@ export function RoutineDetailScreen({ route, navigation }) {
         token
       );
       if (res?.ok && res?.data?.session) {
-        setActiveSession(res.data.session);
-        setSuccessMessage('¡Entrenamiento iniciado! Ya puedes registrar los kilos de tus series.');
+        const returnedSession = res.data.session;
+        setActiveSession(returnedSession);
+
+        // Si la sesión ya existía (recuperada), poblar sus series completas
+        if (returnedSession.sets_count > 0 || (Array.isArray(returnedSession.sets) && returnedSession.sets.length > 0)) {
+          const setsList = Array.isArray(returnedSession.sets) && returnedSession.sets.length > 0
+            ? returnedSession.sets
+            : null;
+
+          if (setsList) {
+            const setsMap = {};
+            setsList.forEach(st => {
+              const exTarget = routine.exercises?.find(e => e.exercise_id === st.exercise_id);
+              const key = exTarget ? exTarget.routine_exercise_id : (st.routine_exercise_id || st.exercise_id);
+              if (!setsMap[key]) setsMap[key] = [];
+              setsMap[key].push(st);
+            });
+            setRegisteredSets(setsMap);
+          } else {
+            try {
+              const aRes = await workoutService.getActiveSession(routine.id, token);
+              if (aRes?.ok && aRes?.data?.active_session?.sets) {
+                const setsMap = {};
+                aRes.data.active_session.sets.forEach(st => {
+                  const exTarget = routine.exercises?.find(e => e.exercise_id === st.exercise_id);
+                  const key = exTarget ? exTarget.routine_exercise_id : (st.routine_exercise_id || st.exercise_id);
+                  if (!setsMap[key]) setsMap[key] = [];
+                  setsMap[key].push(st);
+                });
+                setRegisteredSets(setsMap);
+              }
+            } catch (e) {}
+          }
+          setSuccessMessage('¡Sesión activa recuperada! Continúa registrando tus series.');
+        } else {
+          setRegisteredSets({});
+          setSuccessMessage('¡Entrenamiento iniciado! Ya puedes registrar los kilos de tus series.');
+        }
       }
     } catch (err) {
       setErrorMessage(err.message || 'no fue posible iniciar el entrenamiento');
@@ -230,10 +267,23 @@ export function RoutineDetailScreen({ route, navigation }) {
     }
   };
 
-  // Finalizar sesion activa
-  const handleFinishWorkout = () => {
-    setActiveSession(null);
-    setSuccessMessage('¡Excelente! Sesión completada y pesos registrados en tu historial.');
+  const [finishingSession, setFinishingSession] = useState(false);
+
+  // Finalizar formalmente la sesion activa en backend
+  const handleFinishWorkout = async () => {
+    if (!activeSession || finishingSession) return;
+    setFinishingSession(true);
+    setErrorMessage(null);
+    try {
+      await workoutService.finishSession(activeSession.id, token);
+      setActiveSession(null);
+      setRegisteredSets({});
+      setSuccessMessage('¡Excelente! Sesión finalizada con éxito y registrada en tu historial.');
+    } catch (err) {
+      setErrorMessage(err.message || 'no fue posible finalizar la sesión');
+    } finally {
+      setFinishingSession(false);
+    }
   };
 
   const assignedUsersCount = Array.isArray(routine?.assigned_users)
@@ -241,30 +291,32 @@ export function RoutineDetailScreen({ route, navigation }) {
     : (routine?.member_id ? 1 : 0);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      {/* barra superior fija con boton volver bien separado y centrado */}
+      <View style={styles.topNavBar}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          accessibilityRole="button"
+          accessibilityLabel="volver"
+        >
+          <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
+            ← VOLVER
+          </Text>
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          DETALLE DE RUTINA
+        </Text>
+        <View style={styles.navBarSpacer} />
+      </View>
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
-        {/* barra superior con boton volver */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={[styles.backBtn, { borderColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="volver"
-          >
-            <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
-              VOLVER
-            </Text>
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>
-            DETALLE DE RUTINA
-          </Text>
-        </View>
-
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
         {successMessage && <StatusBanner message={successMessage} type="success" />}
 
@@ -272,8 +324,19 @@ export function RoutineDetailScreen({ route, navigation }) {
           <LoadingSpinner message="cargando rutina y ejercicios..." />
         ) : routine ? (
           <>
-            {/* ficha principal de la rutina */}
+            {/* ficha principal de la rutina con tarjeta estructurada */}
             <Card style={styles.routineCard}>
+              <View style={styles.routineBadgeRow}>
+                <View style={[styles.heroPlanTag, { backgroundColor: 'rgba(57, 255, 20, 0.1)', borderColor: colors.primary }]}>
+                  <Text style={[styles.heroPlanTagText, { color: colors.primary }]}>PLAN DE ENTRENAMIENTO</Text>
+                </View>
+                {routine.trainer_name ? (
+                  <Text style={[styles.trainerNameTag, { color: colors.textSecondary }]}>
+                    Prof. {routine.trainer_name}
+                  </Text>
+                ) : null}
+              </View>
+
               <Text style={[styles.routineName, { color: colors.text }]}>
                 {routine.name}
               </Text>
@@ -283,27 +346,30 @@ export function RoutineDetailScreen({ route, navigation }) {
                 </Text>
               ) : null}
 
-              <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-              <View style={styles.metaRow}>
-                {routine.trainer_name ? (
-                  <Text style={[styles.metaText, { color: colors.textMuted }]}>
-                    entrenador: <Text style={{ color: colors.text, fontWeight: '700' }}>{routine.trainer_name}</Text>
+              {/* Bloque con métricas del plan */}
+              <View style={[styles.planStatsBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.planStatCol}>
+                  <Text style={[styles.planStatLabel, { color: colors.textMuted }]}>SOCIOS ASIGNADOS</Text>
+                  <Text style={[styles.planStatVal, { color: assignedUsersCount > 0 ? colors.primary : colors.warning }]}>
+                    {assignedUsersCount > 0 ? `${assignedUsersCount} socio(s)` : 'Sin asignar'}
                   </Text>
-                ) : null}
-
-                <Text style={[styles.metaText, { color: colors.textMuted }]}>
-                  socios asignados:{' '}
-                  <Text style={{ color: assignedUsersCount > 0 ? colors.primary : colors.warning, fontWeight: '700' }}>
-                    {assignedUsersCount > 0 ? `${assignedUsersCount} socio(s)` : 'sin socio asignado'}
+                </View>
+                <View style={styles.planStatColRight}>
+                  <Text style={[styles.planStatLabel, { color: colors.textMuted }]}>EJERCICIOS</Text>
+                  <Text style={[styles.planStatVal, { color: colors.text }]}>
+                    {routine.exercises?.length || 0} ejercicio(s)
                   </Text>
-                </Text>
-                {routine.member_name ? (
-                  <Text style={[styles.memberNamesText, { color: colors.textSecondary }]}>
+                </View>
+              </View>
+
+              {routine.member_name ? (
+                <View style={[styles.membersRow, { borderColor: colors.border }]}>
+                  <Text style={[styles.membersLabel, { color: colors.textMuted }]}>SOCIOS:</Text>
+                  <Text style={[styles.memberNamesText, { color: colors.textSecondary }]} numberOfLines={2}>
                     {routine.member_name}
                   </Text>
-                ) : null}
-              </View>
+                </View>
+              ) : null}
 
               {/* Botón de Iniciar Entrenamiento exclusivo para socios */}
               {user?.role === 'member' && (
@@ -320,6 +386,8 @@ export function RoutineDetailScreen({ route, navigation }) {
                         title="FINALIZAR ENTRENAMIENTO"
                         variant="primary"
                         onPress={handleFinishWorkout}
+                        loading={finishingSession}
+                        disabled={finishingSession}
                         style={{ marginTop: 8 }}
                       />
                     </View>
@@ -423,6 +491,20 @@ export function RoutineDetailScreen({ route, navigation }) {
                 description="esta rutina aún no contiene ejercicios asignados."
               />
             )}
+
+            {/* Guía funcional de entrenamiento para aprovechar el espacio natural */}
+            <View style={[styles.guideBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.guideBoxTitle, { color: colors.primary }]}>
+                💡 {user?.role === 'member' ? 'SEGUIMIENTO DE PROGRESO' : 'ADMINISTRACIÓN DEL PLAN'}
+              </Text>
+              <Text style={[styles.guideBoxText, { color: colors.textSecondary }]}>
+                {user?.role === 'member'
+                  ? 'Tocá "INICIAR ENTRENAMIENTO" para registrar los kilos y repeticiones ejecutadas en cada serie. Tus marcas se almacenan de manera independiente en tu cuenta.'
+                  : 'Podés editar los ejercicios, cambiar las repeticiones y asignar o desasignar socios a este plan desde la sección principal de tu panel.'}
+              </Text>
+            </View>
+
+            <View style={styles.bottomSpacer} />
           </>
         ) : (
           <EmptyState
@@ -496,57 +578,124 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1
   },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    paddingBottom: 40
-  },
-  header: {
+  topNavBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 12
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)'
   },
   backBtn: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1
   },
   backBtnText: {
     fontSize: 11,
-    fontWeight: '800'
+    fontWeight: '800',
+    letterSpacing: 0.5
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: '900'
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.4
+  },
+  navBarSpacer: {
+    width: 70
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 36
   },
   routineCard: {
-    padding: 18,
-    marginBottom: 16
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 14
+  },
+  routineHeroHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  routineBadgeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  heroPlanTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1
+  },
+  heroPlanTagText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.6
+  },
+  trainerNameTag: {
+    fontSize: 11,
+    fontWeight: '700'
   },
   routineName: {
     fontSize: 22,
-    fontWeight: '900'
+    fontWeight: '900',
+    letterSpacing: 0.2
   },
   routineDesc: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 6
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+    marginBottom: 10
   },
-  divider: {
-    height: 1,
-    marginVertical: 12
+  planStatsBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginVertical: 6
   },
-  metaRow: {
-    gap: 4
+  planStatCol: {
+    flex: 1
   },
-  metaText: {
-    fontSize: 13
+  planStatColRight: {
+    alignItems: 'flex-end'
+  },
+  planStatLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5
+  },
+  planStatVal: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2
+  },
+  membersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 6,
+    gap: 6
+  },
+  membersLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5
   },
   memberNamesText: {
-    fontSize: 12,
-    marginTop: 2
+    fontSize: 11,
+    fontWeight: '700',
+    flex: 1
   },
   sessionControlBox: {
     marginTop: 8
@@ -557,12 +706,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(57, 255, 20, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(57, 255, 20, 0.3)',
-    marginTop: 8
+    marginTop: 6
   },
   sessionStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8
+    gap: 6
   },
   liveDot: {
     width: 8,
@@ -571,81 +720,105 @@ const styles = StyleSheet.create({
     backgroundColor: '#39ff14'
   },
   activeSessionTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8
+  },
+  sectionTitleRow: {
+    marginTop: 4,
+    marginBottom: 8
+  },
+  sectionTitle: {
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 0.8
   },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 10
-  },
   exerciseItemCard: {
     padding: 14,
-    marginVertical: 6
+    marginVertical: 5,
+    borderRadius: 12
+  },
+  guideBox: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 14,
+    marginBottom: 8
+  },
+  guideBoxTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    marginBottom: 4
+  },
+  guideBoxText: {
+    fontSize: 12,
+    lineHeight: 17
+  },
+  bottomSpacer: {
+    height: 20
   },
   exerciseHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 10
+    gap: 8,
+    marginBottom: 6
   },
   posBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: 6
   },
   posText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900'
   },
   exerciseTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     flex: 1
   },
   paramRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
+    gap: 6,
+    marginBottom: 6,
     flexWrap: 'wrap'
   },
   paramBox: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: 'center'
   },
   paramLabel: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
     letterSpacing: 0.5
   },
   paramValue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
-    marginTop: 2
+    marginTop: 1
   },
   completedSetsSection: {
-    marginVertical: 6,
-    paddingTop: 4
+    marginVertical: 4,
+    paddingTop: 2
   },
   completedSetsTitle: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.5,
-    marginBottom: 4
+    marginBottom: 3
   },
   completedSetsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6
+    gap: 4
   },
   setChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1
   },
@@ -653,37 +826,37 @@ const styles = StyleSheet.create({
     fontSize: 11
   },
   logSetBtn: {
-    marginVertical: 8
+    marginVertical: 4
   },
   exerciseTech: {
-    fontSize: 12,
-    lineHeight: 16,
-    marginTop: 4
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 3
   },
   modalBackdrop: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20
+    padding: 16
   },
   modalContainer: {
     width: '100%',
     borderRadius: 16,
     borderWidth: 1,
-    padding: 20
+    padding: 16
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '900'
   },
   modalSubtitle: {
-    fontSize: 14,
-    marginBottom: 14
+    fontSize: 12,
+    marginBottom: 10
   },
   modalActions: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 14
+    gap: 8,
+    marginTop: 10
   },
   modalBtn: {
     flex: 1
