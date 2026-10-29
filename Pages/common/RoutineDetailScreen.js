@@ -307,7 +307,16 @@ export function RoutineDetailScreen({ route, navigation }) {
         <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
           DETALLE DE RUTINA
         </Text>
-        <View style={styles.navBarSpacer} />
+        <TouchableOpacity
+          onPress={() => navigation.navigate('WorkoutHistory')}
+          style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          accessibilityRole="button"
+          accessibilityLabel="ver historial"
+        >
+          <Text style={[styles.backBtnText, { color: colors.primary }]}>
+            HISTORIAL ⏱
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView

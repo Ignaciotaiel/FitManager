@@ -311,7 +311,7 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       return res.status(200).json({ ok: true, data: { session } });
     });
 
-    // 8. GET /api/workouts/sessions/active
+    // 8. GET /api/workouts/sessions/active (DEBE IR ANTES DE /:sessionId PARA NO SER CAPTURADO COMO PARÁMETRO)
     app.get('/api/workouts/sessions/active', testVerifyToken, testRequireRole('member', 'admin'), (req, res) => {
       const userId = req.user.id;
       const routineId = req.query.routine_id ? Number(req.query.routine_id) : null;
@@ -326,6 +326,35 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       const active = matchingSessions[matchingSessions.length - 1]; // más reciente
       const sets = mockSetLogs.filter(sl => sl.session_id === active.id);
       return res.status(200).json({ ok: true, data: { active_session: { ...active, sets } } });
+    });
+
+    // 8.1 GET /api/workouts/sessions/:sessionId
+    app.get('/api/workouts/sessions/:sessionId', testVerifyToken, (req, res) => {
+      const { role, id: authUserId } = req.user;
+      const session = mockSessions.find(s => s.id === Number(req.params.sessionId));
+      if (!session) {
+        return res.status(404).json({ ok: false, error: { message: 'sesion no existe', code: 'SESSION_NOT_FOUND' } });
+      }
+      if (role === 'member' && Number(session.user_id) !== Number(authUserId)) {
+        return res.status(403).json({ ok: false, error: { message: 'no tienes permiso', code: 'FORBIDDEN' } });
+      }
+      if (role === 'trainer' && Number(session.user_id) !== Number(authUserId)) {
+        const hasAccess = mockRoutines.some(r => r.trainer_id === authUserId && r.member_id === session.user_id);
+        if (!hasAccess) {
+          return res.status(403).json({ ok: false, error: { message: 'sin vinculo con el socio', code: 'FORBIDDEN' } });
+        }
+      }
+      const sets = mockSetLogs
+        .filter(sl => sl.session_id === session.id)
+        .map(sl => {
+          const ex = mockExercises.find(e => e.id === sl.exercise_id);
+          return {
+            ...sl,
+            exercise_name: ex ? ex.name : 'Ejercicio',
+            muscle_group: ex ? ex.muscle_group : null
+          };
+        });
+      return res.status(200).json({ ok: true, data: { session: { ...session, sets } } });
     });
 
     // 9. DELETE /api/exercises/:id (simulado con soft-delete si tiene relaciones en workout_set_logs)
@@ -683,6 +712,12 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
     const activeData = await getActive.json();
     assert.strictEqual(activeData.data.active_session.id, newSessionJson.data.session.id);
     assert.strictEqual(activeData.data.active_session.sets.length, 0);
+
+    // Finalizar la sesión para dejar limpio el estado
+    await fetch(`${baseUrl}/api/workouts/sessions/${newSessionJson.data.session.id}/finish`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
   });
 
   test('14. Eliminar ejercicio preserva el historial si ya tiene series registradas (baja logica)', async () => {
@@ -921,6 +956,69 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
     });
     const afterFinishJson = await afterFinish.json();
     assert.strictEqual(afterFinishJson.data.active_session, null);
+
+    // 7. Requisito clave: Una vez finalizada, consultar el detalle puntual de la sesión finalizada debe retornar todas sus series
+    const detailRes = await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const detailJson = await detailRes.json();
+    assert.strictEqual(detailRes.status, 200);
+    assert.strictEqual(detailJson.data.session.id, sessionId);
+    assert.strictEqual(detailJson.data.session.status, 'completed');
+    assert.strictEqual(detailJson.data.session.sets.length, 3);
+    assert.strictEqual(detailJson.data.session.sets[0].weight_kg, 85);
+    assert.strictEqual(detailJson.data.session.sets[1].weight_kg, 90);
+    assert.strictEqual(detailJson.data.session.sets[2].weight_kg, 95);
+
+    // 8. También debe aparecer en la lista general de historial
+    const historyRes = await fetch(`${baseUrl}/api/workouts/history`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const historyJson = await historyRes.json();
+    assert.strictEqual(historyRes.status, 200);
+    const foundInHistory = historyJson.data.sessions.find(s => s.id === sessionId);
+    assert.notStrictEqual(foundInHistory, undefined);
+    assert.strictEqual(foundInHistory.status, 'completed');
+    assert.strictEqual(foundInHistory.sets.length, 3);
+  });
+
+  test('20. Aislamiento por usuario al consultar detalle de sesión (GET /sessions/:id)', async () => {
+    const tokenAlice = makeToken(mockUsers[2]); // Alice (id: 3)
+    const tokenBob = makeToken(mockUsers[3]);   // Bob (id: 4)
+
+    // Crear una sesión finalizada para Bob
+    const bobSession = {
+      id: nextSessionId++,
+      user_id: 4,
+      routine_id: 20,
+      session_date: new Date().toISOString(),
+      status: 'completed',
+      ended_at: new Date().toISOString(),
+      notes: 'Sesion privada de Bob'
+    };
+    mockSessions.push(bobSession);
+    mockSetLogs.push({
+      id: nextSetLogId++,
+      session_id: bobSession.id,
+      user_id: 4,
+      exercise_id: 2,
+      set_number: 1,
+      weight_kg: 100,
+      reps_completed: 5,
+      created_at: new Date().toISOString()
+    });
+
+    // Bob puede consultar su propia sesión
+    const bobRes = await fetch(`${baseUrl}/api/workouts/sessions/${bobSession.id}`, {
+      headers: { Authorization: `Bearer ${tokenBob}` }
+    });
+    assert.strictEqual(bobRes.status, 200);
+
+    // Alice intenta consultar la sesión de Bob -> debe responder 403 Forbidden
+    const aliceRes = await fetch(`${baseUrl}/api/workouts/sessions/${bobSession.id}`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    assert.strictEqual(aliceRes.status, 403);
   });
 });
 

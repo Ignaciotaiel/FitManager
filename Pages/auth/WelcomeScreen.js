@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { Button, Card } from '../../Modules/components/index.js';
@@ -9,8 +10,12 @@ export function WelcomeScreen({ navigation }) {
   const { hasPersistedSession, resumeSession, user } = useAuth();
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <View style={styles.container}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        bounces={false}
+        showsVerticalScrollIndicator={false}
+      >
         {/* barra superior con selector de tema discreto */}
         <View style={styles.topBar}>
           <View style={styles.brandBadge}>
@@ -103,7 +108,7 @@ export function WelcomeScreen({ navigation }) {
             onPress={() => navigation.navigate('Register')}
           />
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -112,11 +117,11 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1
   },
-  container: {
-    flex: 1,
-    paddingHorizontal: 22,
-    justifyContent: 'space-between',
-    paddingVertical: 14
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    justifyContent: 'space-between'
   },
   topBar: {
     flexDirection: 'row',

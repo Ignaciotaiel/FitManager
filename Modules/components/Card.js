@@ -25,9 +25,9 @@ export function Card({ children, surface = false, style, ...rest }) {
 const styles = StyleSheet.create({
   cardBase: {
     borderRadius: 14,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
-    marginVertical: 8
+    marginVertical: 5
   }
 });
 

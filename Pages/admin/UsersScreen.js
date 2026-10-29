@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   TouchableOpacity,
   RefreshControl
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { userService } from '../../Modules/users/userService.js';
@@ -311,24 +311,26 @@ export function UsersScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <View style={styles.container}>
-        {/* cabecera con boton volver */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={[styles.backBtn, { borderColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="volver al panel"
-          >
-            <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
-              VOLVER
-            </Text>
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>
-            USUARIOS DEL SISTEMA
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      {/* barra superior fija y limpia */}
+      <View style={styles.topNavBar}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          accessibilityRole="button"
+          accessibilityLabel="volver al panel"
+        >
+          <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
+            ← VOLVER
           </Text>
-        </View>
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          USUARIOS DEL SISTEMA
+        </Text>
+        <View style={styles.navBarSpacer} />
+      </View>
+
+      <View style={styles.container}>
 
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
         {successMessage && <StatusBanner message={successMessage} type="success" />}
@@ -401,40 +403,50 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1
   },
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 10
-  },
-  header: {
+  topNavBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 10
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)'
   },
   backBtn: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1
   },
   backBtnText: {
     fontSize: 11,
-    fontWeight: '800'
+    fontWeight: '800',
+    letterSpacing: 0.5
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '900'
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.4
+  },
+  navBarSpacer: {
+    width: 70
+  },
+  container: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8
   },
   searchInput: {
     marginVertical: 4
   },
   listContent: {
-    paddingBottom: 20
+    flexGrow: 1,
+    paddingBottom: 36
   },
   userCard: {
-    padding: 14,
-    marginVertical: 6
+    padding: 12,
+    marginVertical: 4
   },
   userCardTop: {
     flexDirection: 'row',
@@ -446,16 +458,16 @@ const styles = StyleSheet.create({
     paddingRight: 8
   },
   userName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800'
   },
   userEmail: {
-    fontSize: 13,
-    marginTop: 2
+    fontSize: 12,
+    marginTop: 1
   },
   roleSelectorSection: {
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 8,
+    paddingTop: 6,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: 'rgba(255, 255, 255, 0.08)'
   },
@@ -463,26 +475,26 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
-    marginBottom: 6
+    marginBottom: 5
   },
   roleChipsRow: {
     flexDirection: 'row',
-    gap: 8
+    gap: 6
   },
   roleChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1
   },
   roleChipText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.5
   },
   divider: {
     height: 1,
-    marginVertical: 10
+    marginVertical: 8
   },
   userCardBottom: {
     flexDirection: 'row',
@@ -495,8 +507,8 @@ const styles = StyleSheet.create({
     gap: 6
   },
   dot: {
-    width: 8,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: 4
   },
   statusText: {
@@ -504,8 +516,8 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   toggleBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1
   },

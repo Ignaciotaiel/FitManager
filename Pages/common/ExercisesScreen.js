@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   TouchableOpacity,
   RefreshControl,
@@ -12,6 +11,7 @@ import {
   Platform,
   ScrollView
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { exerciseService } from '../../Modules/exercises/exerciseService.js';
@@ -175,7 +175,7 @@ export function ExercisesScreen({ navigation }) {
     });
   };
 
-  // confirmacion de eliminacion con manejo seguro de error 409
+  // confirmacion de eliminacion con manejo seguro de baja logica o 409
   const handleConfirmDelete = async () => {
     if (!deleteModal.exerciseId) return;
     setDeleteModal((prev) => ({ ...prev, loading: true }));
@@ -183,14 +183,15 @@ export function ExercisesScreen({ navigation }) {
     try {
       const res = await exerciseService.deleteExercise(deleteModal.exerciseId, token);
       if (res?.ok) {
-        setSuccessMessage(`ejercicio "${deleteModal.exerciseName}" eliminado con éxito`);
+        const msg = res.message || `ejercicio "${deleteModal.exerciseName}" eliminado con éxito`;
+        setSuccessMessage(msg);
         setExercises((prev) => prev.filter((e) => e.id !== deleteModal.exerciseId));
       }
     } catch (error) {
       if (error.status === 409 || error.code === 'EXERCISE_IN_USE') {
-        setErrorMessage('no se puede eliminar este ejercicio porque está asignado a una o más rutinas');
+        setErrorMessage(error.message || 'no se puede eliminar este ejercicio porque está en uso y no se permite la baja física');
       } else if (error.status === 403) {
-        setErrorMessage('no tienes permisos suficientes para eliminar ejercicios (exclusivo admin)');
+        setErrorMessage('no tienes permisos suficientes para eliminar ejercicios (exclusivo para entrenadores y administradores)');
       } else {
         setErrorMessage(error.message || 'no fue posible eliminar el ejercicio');
       }
@@ -243,16 +244,14 @@ export function ExercisesScreen({ navigation }) {
               <Text style={[styles.actionBtnText, { color: colors.text }]}>EDITAR</Text>
             </TouchableOpacity>
 
-            {isAdmin && (
-              <TouchableOpacity
-                onPress={() => handleOpenDelete(item)}
-                style={[styles.actionBtn, { borderColor: colors.danger, backgroundColor: colors.dangerSurface }]}
-                accessibilityRole="button"
-                accessibilityLabel="eliminar ejercicio"
-              >
-                <Text style={[styles.actionBtnText, { color: colors.danger }]}>ELIMINAR</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              onPress={() => handleOpenDelete(item)}
+              style={[styles.actionBtn, { borderColor: colors.danger, backgroundColor: colors.dangerSurface }]}
+              accessibilityRole="button"
+              accessibilityLabel="eliminar ejercicio"
+            >
+              <Text style={[styles.actionBtnText, { color: colors.danger }]}>ELIMINAR</Text>
+            </TouchableOpacity>
           </View>
         )}
       </Card>
@@ -260,24 +259,26 @@ export function ExercisesScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      <View style={styles.container}>
-        {/* barra superior */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={[styles.backBtn, { borderColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="volver"
-          >
-            <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
-              VOLVER
-            </Text>
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>
-            BIBLIOTECA DE EJERCICIOS
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      {/* barra superior fija y limpia */}
+      <View style={styles.topNavBar}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          accessibilityRole="button"
+          accessibilityLabel="volver"
+        >
+          <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
+            ← VOLVER
           </Text>
-        </View>
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          BIBLIOTECA DE TÉCNICAS
+        </Text>
+        <View style={styles.navBarSpacer} />
+      </View>
+
+      <View style={styles.container}>
 
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
         {successMessage && <StatusBanner message={successMessage} type="success" />}
@@ -447,30 +448,39 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1
   },
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 10
-  },
-  header: {
+  topNavBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 8
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)'
   },
   backBtn: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1
   },
   backBtnText: {
     fontSize: 11,
-    fontWeight: '800'
+    fontWeight: '800',
+    letterSpacing: 0.5
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: '900'
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.4
+  },
+  navBarSpacer: {
+    width: 70
+  },
+  container: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8
   },
   searchInput: {
     marginVertical: 4
@@ -479,26 +489,27 @@ const styles = StyleSheet.create({
     marginVertical: 4
   },
   listContent: {
-    paddingBottom: 24
+    flexGrow: 1,
+    paddingBottom: 36
   },
   exerciseCard: {
-    padding: 14,
-    marginVertical: 6
+    padding: 12,
+    marginVertical: 4
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6
+    marginBottom: 4
   },
   exerciseName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     flex: 1,
     paddingRight: 8
   },
   difficultyBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
     borderWidth: 1
@@ -508,20 +519,20 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   muscleGroup: {
-    fontSize: 13,
-    marginBottom: 4
+    fontSize: 12,
+    marginBottom: 2
   },
   description: {
     fontSize: 12,
-    lineHeight: 18,
+    lineHeight: 17,
     marginTop: 2
   },
   cardActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 8,
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 8,
+    paddingTop: 6,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.05)'
   },
@@ -539,38 +550,38 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20
+    padding: 16
   },
   modalContainer: {
     width: '100%',
-    maxHeight: '90%',
+    maxHeight: '88%',
     borderRadius: 16,
     borderWidth: 1,
-    padding: 18
+    padding: 16
   },
   modalScroll: {
-    paddingBottom: 10
+    paddingBottom: 8
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '900',
-    marginBottom: 4
+    marginBottom: 2
   },
   modalSubtitle: {
-    fontSize: 13,
-    marginBottom: 12
+    fontSize: 12,
+    marginBottom: 10
   },
   difficultyLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    marginTop: 8,
-    marginBottom: 6,
+    marginTop: 6,
+    marginBottom: 5,
     letterSpacing: 0.5
   },
   difficultyRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16
+    gap: 6,
+    marginBottom: 12
   },
   diffBtn: {
     flex: 1,
@@ -585,8 +596,8 @@ const styles = StyleSheet.create({
   },
   modalActions: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 10
+    gap: 8,
+    marginTop: 8
   },
   modalBtn: {
     flex: 1

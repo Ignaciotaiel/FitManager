@@ -13,6 +13,21 @@ async function checkHasAssignmentsTable() {
   }
 }
 
+// Helper para saber si la columna is_active existe físicamente en exercises
+let hasExerciseIsActiveCache = null;
+async function checkHasExerciseIsActive() {
+  if (hasExerciseIsActiveCache !== null) return hasExerciseIsActiveCache;
+  try {
+    const [rows] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'exercises' AND COLUMN_NAME = 'is_active'"
+    );
+    hasExerciseIsActiveCache = rows.length > 0;
+    return hasExerciseIsActiveCache;
+  } catch (e) {
+    return false;
+  }
+}
+
 // listar rutinas segun el rol del usuario autenticado
 export async function listRoutines(req, res, next) {
   try {
@@ -346,15 +361,24 @@ export async function createRoutine(req, res, next) {
       if (cleanExercises.length > 0) {
         const ids = [...new Set(cleanExercises.map((e) => e.exercise_id))];
         const placeholders = ids.map(() => '?').join(',');
-        const [found] = await pool.execute(
-          `SELECT id FROM exercises WHERE id IN (${placeholders})`,
-          ids
-        );
+        const hasIsActive = await checkHasExerciseIsActive();
+
+        let query = `SELECT id FROM exercises WHERE id IN (${placeholders})`;
+        if (hasIsActive) {
+          query += ' AND is_active = 1';
+        }
+
+        const [found] = await pool.execute(query, ids);
 
         if (found.length !== ids.length) {
           return res.status(400).json({
             ok: false,
-            error: { message: 'uno o mas ejercicios indicados no existen en la base de datos', code: 'EXERCISE_NOT_FOUND' }
+            error: {
+              message: hasIsActive
+                ? 'uno o mas ejercicios indicados no existen o se encuentran archivados'
+                : 'uno o mas ejercicios indicados no existen en la base de datos',
+              code: 'EXERCISE_NOT_FOUND'
+            }
           });
         }
       }
@@ -557,15 +581,24 @@ export async function updateRoutine(req, res, next) {
       if (cleanExercises.length > 0) {
         const ids = [...new Set(cleanExercises.map((e) => e.exercise_id))];
         const placeholders = ids.map(() => '?').join(',');
-        const [found] = await pool.execute(
-          `SELECT id FROM exercises WHERE id IN (${placeholders})`,
-          ids
-        );
+        const hasIsActive = await checkHasExerciseIsActive();
+
+        let query = `SELECT id FROM exercises WHERE id IN (${placeholders})`;
+        if (hasIsActive) {
+          query += ' AND is_active = 1';
+        }
+
+        const [found] = await pool.execute(query, ids);
 
         if (found.length !== ids.length) {
           return res.status(400).json({
             ok: false,
-            error: { message: 'uno o mas ejercicios indicados no existen en la base de datos', code: 'EXERCISE_NOT_FOUND' }
+            error: {
+              message: hasIsActive
+                ? 'uno o mas ejercicios indicados no existen o se encuentran archivados'
+                : 'uno o mas ejercicios indicados no existen en la base de datos',
+              code: 'EXERCISE_NOT_FOUND'
+            }
           });
         }
       }

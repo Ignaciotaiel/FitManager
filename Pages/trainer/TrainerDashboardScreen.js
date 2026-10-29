@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   TouchableOpacity,
   RefreshControl,
@@ -12,6 +11,7 @@ import {
   Platform,
   ScrollView
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { routineService } from '../../Modules/routines/routineService.js';
@@ -313,7 +313,19 @@ export function TrainerDashboardScreen({ navigation }) {
     }
   };
 
-  const renderRoutineItem = ({ item }) => {
+  const totalAssignedMembers = useMemo(() => {
+    const memberSet = new Set();
+    routines.forEach(r => {
+      if (Array.isArray(r.assigned_users)) {
+        r.assigned_users.forEach(u => memberSet.add(u.member_id || u.id));
+      } else if (r.member_id) {
+        memberSet.add(r.member_id);
+      }
+    });
+    return memberSet.size;
+  }, [routines]);
+
+  const renderRoutineItem = ({ item, index }) => {
     const assignedCount = Array.isArray(item.assigned_users)
       ? item.assigned_users.length
       : (item.member_id ? 1 : 0);
@@ -321,9 +333,31 @@ export function TrainerDashboardScreen({ navigation }) {
     return (
       <Card style={styles.routineCard}>
         <View style={styles.routineHeader}>
-          <Text style={[styles.routineTitle, { color: colors.text }]}>
-            {item.name}
-          </Text>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <View style={styles.routineBadgeRow}>
+              <Text style={[styles.routineTag, { color: colors.primary }]}>
+                RUTINA #{index + 1}
+              </Text>
+              <View style={[
+                styles.assignedBadge,
+                {
+                  backgroundColor: assignedCount > 0 ? 'rgba(57, 255, 20, 0.1)' : 'rgba(255, 170, 0, 0.1)',
+                  borderColor: assignedCount > 0 ? colors.primary : colors.warning
+                }
+              ]}>
+                <Text style={[
+                  styles.assignedBadgeText,
+                  { color: assignedCount > 0 ? colors.primary : colors.warning }
+                ]}>
+                  {assignedCount > 0 ? `${assignedCount} socio(s)` : 'Plantilla'}
+                </Text>
+              </View>
+            </View>
+            <Text style={[styles.routineTitle, { color: colors.text }]}>
+              {item.name}
+            </Text>
+          </View>
+
           <View style={styles.headerActions}>
             <TouchableOpacity
               onPress={() => handleOpenEdit(item)}
@@ -351,22 +385,17 @@ export function TrainerDashboardScreen({ navigation }) {
           </Text>
         ) : null}
 
-        <View style={styles.metaRow}>
-          <Text style={[styles.metaText, { color: colors.textMuted }]}>
-            socios asignados:{' '}
-            <Text style={{ color: assignedCount > 0 ? colors.primary : colors.warning, fontWeight: '700' }}>
-              {assignedCount > 0 ? `${assignedCount} socio(s)` : 'sin asignar (plantilla)'}
-            </Text>
-          </Text>
-          {assignedCount > 0 && item.member_name ? (
-            <Text style={[styles.assignedNamesText, { color: colors.textSecondary }]}>
+        {assignedCount > 0 && item.member_name ? (
+          <View style={[styles.assignedBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.assignedBarLabel, { color: colors.textMuted }]}>SOCIOS:</Text>
+            <Text style={[styles.assignedBarNames, { color: colors.textSecondary }]} numberOfLines={1}>
               {item.member_name}
             </Text>
-          ) : null}
-        </View>
+          </View>
+        ) : null}
 
         <Button
-          title="VER DETALLE Y EJERCICIOS"
+          title="VER DETALLE Y SERIES"
           variant="secondary"
           onPress={() => navigation.navigate('RoutineDetail', { routineId: item.id })}
           style={styles.detailBtn}
@@ -376,35 +405,58 @@ export function TrainerDashboardScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.container}>
         <DashboardHeader
           title="PANEL DE ENTRENAMIENTO"
-          subtitle="gestión de rutinas multiusuario y biblioteca de ejercicios"
+          subtitle="gestión de planes, ejercicios y asignaciones"
         />
 
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
         {successMessage && <StatusBanner message={successMessage} type="success" />}
 
-        {/* barra de accesos rapidos */}
+        {/* 1. Métricas de gestión reales del entrenador */}
+        <View style={styles.metricGrid}>
+          <View style={[styles.metricBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>PLANES ACTIVOS</Text>
+            <Text style={[styles.metricNumber, { color: colors.primary }]}>{routines.length}</Text>
+          </View>
+          <View style={[styles.metricBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>SOCIOS ASIGNADOS</Text>
+            <Text style={[styles.metricNumber, { color: colors.text }]}>{totalAssignedMembers}</Text>
+          </View>
+          <View style={[styles.metricBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.metricLabel, { color: colors.textMuted }]}>TÉCNICAS</Text>
+            <Text style={[styles.metricNumber, { color: colors.text }]}>{exercisesLibrary.length}</Text>
+          </View>
+        </View>
+
+        {/* 2. Barra de acciones principales */}
         <View style={styles.actionRow}>
           <Button
-            title="BIBLIOTECA DE EJERCICIOS"
+            title="📖 BIBLIOTECA DE TÉCNICAS"
             variant="secondary"
             onPress={() => navigation.navigate('Exercises')}
             style={styles.halfBtn}
           />
           <Button
-            title="+ CREAR RUTINA"
+            title="+ CREAR NUEVA RUTINA"
             variant="primary"
             onPress={handleOpenCreate}
             style={styles.halfBtn}
           />
         </View>
 
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>
-          TUS RUTINAS CREADAS ({routines.length})
-        </Text>
+        <View style={styles.sectionTitleRow}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            PLANES DE ENTRENAMIENTO DIAGRAMADOS
+          </Text>
+          <View style={[styles.countBadge, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.countText, { color: colors.primary }]}>
+              {routines.length}
+            </Text>
+          </View>
+        </View>
 
         {loading ? (
           <LoadingSpinner message="cargando tus rutinas..." />
@@ -414,14 +466,29 @@ export function TrainerDashboardScreen({ navigation }) {
             keyExtractor={(item) => String(item.id)}
             renderItem={renderRoutineItem}
             contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
             }
             ListEmptyComponent={
               <EmptyState
                 title="sin rutinas creadas"
-                description="aún no creaste rutinas. tocá '+ CREAR RUTINA' para diagramar un plan de entrenamiento."
+                description="aún no creaste rutinas. tocá '+ CREAR NUEVA RUTINA' para diagramar un plan de entrenamiento y asignarlo a tus socios."
               />
+            }
+            ListFooterComponent={
+              routines.length > 0 && routines.length <= 2 ? (
+                <View style={styles.trainerQuickTipsCard}>
+                  <View style={[styles.quickTipBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <Text style={[styles.quickTipTitle, { color: colors.primary }]}>
+                      💡 GESTIÓN MULTIUSUARIO
+                    </Text>
+                    <Text style={[styles.quickTipDesc, { color: colors.textSecondary }]}>
+                      Podés asignar una misma rutina a múltiples socios desde el botón EDITAR. Cada socio registrará sus marcas, kilos y repeticiones de forma 100% independiente.
+                    </Text>
+                  </View>
+                </View>
+              ) : null
             }
           />
         )}
@@ -685,46 +752,108 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 10
+    paddingHorizontal: 16,
+    paddingTop: 8
+  },
+  metricGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8
+  },
+  metricBox: {
+    flex: 1,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center'
+  },
+  metricLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+    textAlign: 'center'
+  },
+  metricNumber: {
+    fontSize: 18,
+    fontWeight: '900'
   },
   actionRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginVertical: 8
+    gap: 8,
+    marginVertical: 4
   },
   halfBtn: {
     flex: 1
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    marginBottom: 6
+  },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginTop: 12,
-    marginBottom: 8
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.8
+  },
+  countBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1
+  },
+  countText: {
+    fontSize: 11,
+    fontWeight: '800'
   },
   listContent: {
-    paddingBottom: 24
+    flexGrow: 1,
+    paddingBottom: 36
   },
   routineCard: {
-    padding: 16,
-    marginVertical: 6
+    padding: 14,
+    marginVertical: 5,
+    borderRadius: 12
   },
   routineHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4
+  },
+  routineBadgeRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6
+    gap: 6,
+    marginBottom: 4
+  },
+  routineTag: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.6
+  },
+  assignedBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1
+  },
+  assignedBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4
   },
   routineTitle: {
     fontSize: 17,
-    fontWeight: '800',
-    flex: 1,
-    paddingRight: 8
+    fontWeight: '900',
+    letterSpacing: 0.2
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 6
+    gap: 6,
+    paddingTop: 2
   },
   smallBtn: {
     paddingHorizontal: 8,
@@ -737,43 +866,72 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   routineDesc: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 8
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 6
   },
-  metaRow: {
-    marginBottom: 8
+  assignedBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+    gap: 6
   },
-  metaText: {
-    fontSize: 12
+  assignedBarLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5
   },
-  assignedNamesText: {
+  assignedBarNames: {
     fontSize: 11,
-    marginTop: 2
+    fontWeight: '700',
+    flex: 1
   },
   detailBtn: {
-    marginTop: 6
+    marginTop: 2
+  },
+  trainerQuickTipsCard: {
+    marginTop: 14,
+    marginBottom: 10
+  },
+  quickTipBox: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1
+  },
+  quickTipTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    marginBottom: 4
+  },
+  quickTipDesc: {
+    fontSize: 12,
+    lineHeight: 17
   },
   modalBackdrop: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20
+    padding: 16
   },
   modalContainer: {
     width: '100%',
-    maxHeight: '90%',
+    maxHeight: '88%',
     borderRadius: 16,
     borderWidth: 1,
-    padding: 18
+    padding: 16
   },
   modalScroll: {
-    paddingBottom: 10
+    paddingBottom: 8
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '900',
-    marginBottom: 4
+    marginBottom: 2
   },
   modalSubtitle: {
     fontSize: 13,

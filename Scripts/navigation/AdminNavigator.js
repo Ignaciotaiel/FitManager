@@ -4,6 +4,7 @@ import { AdminDashboardScreen } from '../../Pages/admin/AdminDashboardScreen.js'
 import { UsersScreen } from '../../Pages/admin/UsersScreen.js';
 import { ExercisesScreen } from '../../Pages/common/ExercisesScreen.js';
 import { RoutineDetailScreen } from '../../Pages/common/RoutineDetailScreen.js';
+import { WorkoutHistoryScreen } from '../../Pages/common/WorkoutHistoryScreen.js';
 import { useTheme } from '../../contexto/themeContext.js';
 
 const Stack = createNativeStackNavigator();
@@ -24,6 +25,7 @@ export function AdminNavigator() {
       <Stack.Screen name="Users" component={UsersScreen} />
       <Stack.Screen name="Exercises" component={ExercisesScreen} />
       <Stack.Screen name="RoutineDetail" component={RoutineDetailScreen} />
+      <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen} />
     </Stack.Navigator>
   );
 }

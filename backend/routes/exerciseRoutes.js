@@ -21,7 +21,7 @@ router.get('/:id', getExerciseById);
 router.post('/', requireRole('admin', 'trainer'), createExercise);
 router.patch('/:id', requireRole('admin', 'trainer'), updateExercise);
 
-// eliminacion: exclusivamente para rol admin
-router.delete('/:id', requireRole('admin'), deleteExercise);
+// eliminacion o baja logica: para rol admin y trainer
+router.delete('/:id', requireRole('admin', 'trainer'), deleteExercise);
 
 export default router;

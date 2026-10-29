@@ -557,8 +557,9 @@ export async function getWorkoutHistory(req, res, next) {
       });
     }
 
-    const [sessions] = await pool.execute(
-      `SELECT 
+    const hasStatus = await checkHasSessionStatus();
+    let sessionSelect = `
+      SELECT 
         s.id, 
         s.user_id, 
         s.routine_id, 
@@ -566,20 +567,34 @@ export async function getWorkoutHistory(req, res, next) {
         s.notes, 
         s.created_at,
         r.name AS routine_name,
-        u.name AS user_name
+        u.name AS user_name`;
+    if (hasStatus) {
+      sessionSelect += `, s.status, s.ended_at`;
+    }
+    sessionSelect += `
       FROM workout_sessions s
       LEFT JOIN routines r ON s.routine_id = r.id
       INNER JOIN users u ON s.user_id = u.id
       WHERE s.user_id = ?
       ORDER BY s.session_date DESC, s.id DESC
-      LIMIT ?`,
-      [targetUserId, limit]
+      LIMIT ?`;
+
+    const [sessions] = await pool.execute(sessionSelect, [targetUserId, limit]);
+
+    // Obtener total de sesiones para este usuario para facilitar métricas de historial
+    const [countRows] = await pool.execute(
+      'SELECT COUNT(*) AS total FROM workout_sessions WHERE user_id = ?',
+      [targetUserId]
     );
+    const totalCount = Number(countRows[0]?.total || 0);
 
     if (sessions.length === 0) {
       return res.status(200).json({
         ok: true,
-        data: { sessions: [] }
+        data: {
+          sessions: [],
+          total: totalCount
+        }
       });
     }
 
@@ -591,6 +606,7 @@ export async function getWorkoutHistory(req, res, next) {
         sl.id, 
         sl.session_id, 
         sl.exercise_id, 
+        sl.routine_exercise_id,
         sl.set_number, 
         sl.weight_kg, 
         sl.reps_completed, 
@@ -618,7 +634,121 @@ export async function getWorkoutHistory(req, res, next) {
 
     return res.status(200).json({
       ok: true,
-      data: { sessions: formattedSessions }
+      data: {
+        sessions: formattedSessions,
+        total: totalCount
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ==============================================================================
+// 3.1 CONSULTAR DETALLE DE UNA SESIÓN PUNTUAL POR ID
+// GET /api/workouts/sessions/:sessionId
+// Permite al socio o entrenador autorizado consultar el detalle y todas las series de una sesión finalizada
+// ==============================================================================
+export async function getSessionById(req, res, next) {
+  try {
+    const { role, id: authUserId } = req.user;
+    const { sessionId } = req.params;
+    const parsedSessionId = Number(sessionId);
+
+    if (!Number.isInteger(parsedSessionId) || parsedSessionId <= 0) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'identificador de sesion invalido', code: 'INVALID_SESSION_ID' }
+      });
+    }
+
+    const hasWorkoutTables = await checkHasWorkoutTables();
+    if (!hasWorkoutTables) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+      });
+    }
+
+    const hasStatus = await checkHasSessionStatus();
+    let sessionSelect = `
+      SELECT 
+        s.id, 
+        s.user_id, 
+        s.routine_id, 
+        s.session_date, 
+        s.notes, 
+        s.created_at,
+        r.name AS routine_name,
+        u.name AS user_name`;
+    if (hasStatus) {
+      sessionSelect += `, s.status, s.ended_at`;
+    }
+    sessionSelect += `
+      FROM workout_sessions s
+      LEFT JOIN routines r ON s.routine_id = r.id
+      INNER JOIN users u ON s.user_id = u.id
+      WHERE s.id = ?
+      LIMIT 1`;
+
+    const [sessions] = await pool.execute(sessionSelect, [parsedSessionId]);
+
+    if (sessions.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+      });
+    }
+
+    const session = sessions[0];
+
+    // Control de acceso y aislamiento estricto
+    if (role === 'member' && Number(session.user_id) !== Number(authUserId)) {
+      return res.status(403).json({
+        ok: false,
+        error: { message: 'no tienes permiso para consultar el detalle de esta sesion', code: 'FORBIDDEN' }
+      });
+    }
+
+    if (role === 'trainer' && Number(session.user_id) !== Number(authUserId)) {
+      const hasAccess = await canTrainerAccessMember(authUserId, session.user_id);
+      if (!hasAccess) {
+        return res.status(403).json({
+          ok: false,
+          error: { message: 'no tienes permiso para ver las sesiones de este socio', code: 'FORBIDDEN' }
+        });
+      }
+    }
+
+    // Traer todas las series registradas en esta sesion
+    const [sets] = await pool.execute(
+      `SELECT 
+        sl.id, 
+        sl.session_id, 
+        sl.exercise_id, 
+        sl.routine_exercise_id,
+        sl.set_number, 
+        sl.weight_kg, 
+        sl.reps_completed, 
+        sl.rpe, 
+        sl.created_at,
+        e.name AS exercise_name,
+        e.muscle_group
+      FROM workout_set_logs sl
+      INNER JOIN exercises e ON sl.exercise_id = e.id
+      WHERE sl.session_id = ?
+      ORDER BY sl.exercise_id ASC, sl.set_number ASC`,
+      [parsedSessionId]
+    );
+
+    return res.status(200).json({
+      ok: true,
+      data: {
+        session: {
+          ...session,
+          sets: sets || []
+        }
+      }
     });
   } catch (error) {
     next(error);

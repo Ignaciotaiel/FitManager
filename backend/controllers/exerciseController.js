@@ -3,13 +3,36 @@ import pool from '../config/db.js';
 // valores permitidos para el enum difficulty en la base de datos
 const ALLOWED_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
 
+// Helper para saber si la columna is_active existe físicamente en exercises
+let hasExerciseIsActiveCache = null;
+async function checkHasExerciseIsActive() {
+  if (hasExerciseIsActiveCache !== null) return hasExerciseIsActiveCache;
+  try {
+    const [rows] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'exercises' AND COLUMN_NAME = 'is_active'"
+    );
+    hasExerciseIsActiveCache = rows.length > 0;
+    return hasExerciseIsActiveCache;
+  } catch (e) {
+    return false;
+  }
+}
+
 // listar ejercicios (accesible a admin, trainer y member)
 export async function listExercises(req, res, next) {
   try {
-    const { muscle_group, difficulty, search } = req.query;
+    const { muscle_group, difficulty, search, include_inactive } = req.query;
+    const hasIsActive = await checkHasExerciseIsActive();
 
-    let sql = 'SELECT id, name, description, muscle_group, difficulty, created_at FROM exercises WHERE 1=1';
+    let sql = 'SELECT id, name, description, muscle_group, difficulty, created_at';
+    if (hasIsActive) sql += ', is_active';
+    sql += ' FROM exercises WHERE 1=1';
     const params = [];
+
+    // Ocultar inactivos por defecto para evitar asignarlos a nuevas rutinas
+    if (hasIsActive && include_inactive !== 'true' && include_inactive !== '1') {
+      sql += ' AND is_active = 1';
+    }
 
     if (muscle_group && typeof muscle_group === 'string' && muscle_group.trim()) {
       sql += ' AND muscle_group = ?';
@@ -201,7 +224,7 @@ export async function updateExercise(req, res, next) {
   }
 }
 
-// eliminar ejercicio (solo admin, respetando integridad referencial)
+// eliminar o archivar ejercicio (admin y trainer, respetando integridad referencial y preservando historiales)
 export async function deleteExercise(req, res, next) {
   try {
     const { id } = req.params;
@@ -215,7 +238,7 @@ export async function deleteExercise(req, res, next) {
     }
 
     const [existing] = await pool.execute(
-      'SELECT id FROM exercises WHERE id = ? LIMIT 1',
+      'SELECT id, name FROM exercises WHERE id = ? LIMIT 1',
       [exerciseId]
     );
 
@@ -226,28 +249,74 @@ export async function deleteExercise(req, res, next) {
       });
     }
 
-    // comprobar si esta en uso en alguna rutina
-    const [usages] = await pool.execute(
+    // 1. Comprobar si está en uso en alguna rutina
+    const [routineUsages] = await pool.execute(
       'SELECT id FROM routine_exercises WHERE exercise_id = ? LIMIT 1',
       [exerciseId]
     );
 
-    if (usages.length > 0) {
+    // 2. Comprobar si existen series registradas en el historial de entrenamientos
+    let hasLoggedSets = false;
+    try {
+      const [setUsages] = await pool.execute(
+        'SELECT id FROM workout_set_logs WHERE exercise_id = ? LIMIT 1',
+        [exerciseId]
+      );
+      hasLoggedSets = setUsages.length > 0;
+    } catch (e) {
+      // Si la tabla workout_set_logs no existe en la BD actual, ignorar
+    }
+
+    const hasIsActive = await checkHasExerciseIsActive();
+
+    // Si está en uso en rutinas activas, no se puede eliminar físicamente para no romper los planes
+    if (routineUsages.length > 0) {
+      // Si el modelo tiene la columna is_active, permitimos baja lógica (archivado)
+      if (hasIsActive) {
+        await pool.execute('UPDATE exercises SET is_active = 0 WHERE id = ?', [exerciseId]);
+        return res.status(200).json({
+          ok: true,
+          message: 'el ejercicio fue archivado y ocultado de la biblioteca; sus registros en rutinas e historiales permanecen intactos',
+          data: { id: exerciseId, archived: true }
+        });
+      }
+
       return res.status(409).json({
         ok: false,
         error: {
-          message: 'no se puede eliminar el ejercicio porque esta asignado en una o mas rutinas',
+          message: 'no se puede eliminar el ejercicio porque está asignado en una o más rutinas activas',
           code: 'EXERCISE_IN_USE'
         }
       });
     }
 
+    // Si tiene series registradas en historiales pasados (pero ya no está en rutinas)
+    if (hasLoggedSets) {
+      if (hasIsActive) {
+        await pool.execute('UPDATE exercises SET is_active = 0 WHERE id = ?', [exerciseId]);
+        return res.status(200).json({
+          ok: true,
+          message: 'el ejercicio fue archivado; su historial de pesos y series previas permanece preservado',
+          data: { id: exerciseId, archived: true }
+        });
+      }
+
+      return res.status(409).json({
+        ok: false,
+        error: {
+          message: 'no se puede eliminar físicamente el ejercicio porque posee registros en el historial de entrenamientos de los socios',
+          code: 'EXERCISE_HAS_HISTORY'
+        }
+      });
+    }
+
+    // Eliminación física segura: no tiene rutinas ni historiales vinculados
     await pool.execute('DELETE FROM exercises WHERE id = ?', [exerciseId]);
 
     return res.status(200).json({
       ok: true,
-      message: 'ejercicio eliminado exitosamente',
-      data: { id: exerciseId }
+      message: 'ejercicio eliminado exitosamente de la biblioteca',
+      data: { id: exerciseId, archived: false }
     });
   } catch (error) {
     next(error);

@@ -3,12 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
@@ -80,7 +80,7 @@ export function RegisterScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardContainer}
@@ -254,13 +254,14 @@ const styles = StyleSheet.create({
     flex: 1
   },
   scrollContent: {
-    paddingHorizontal: 22,
-    paddingVertical: 14
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 24
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 16
+    marginBottom: 12
   },
   backButton: {
     paddingHorizontal: 12,
@@ -274,38 +275,38 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5
   },
   titleSection: {
-    marginBottom: 16
+    marginBottom: 10
   },
   brandLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1,
-    marginBottom: 4
+    marginBottom: 2
   },
   title: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '900',
-    letterSpacing: 0.5
+    letterSpacing: 0.4
   },
   subtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 4
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2
   },
   formCard: {
-    marginTop: 8,
-    padding: 16
+    marginTop: 4,
+    padding: 14
   },
   submitBtn: {
-    marginTop: 10
+    marginTop: 8
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 6,
-    marginTop: 28,
-    marginBottom: 20
+    marginTop: 18,
+    marginBottom: 10
   },
   footerText: {
     fontSize: 13

@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MemberDashboardScreen } from '../../Pages/member/MemberDashboardScreen.js';
 import { ExercisesScreen } from '../../Pages/common/ExercisesScreen.js';
 import { RoutineDetailScreen } from '../../Pages/common/RoutineDetailScreen.js';
+import { WorkoutHistoryScreen } from '../../Pages/common/WorkoutHistoryScreen.js';
 import { useTheme } from '../../contexto/themeContext.js';
 
 const Stack = createNativeStackNavigator();
@@ -22,6 +23,7 @@ export function MemberNavigator() {
       <Stack.Screen name="MemberDashboard" component={MemberDashboardScreen} />
       <Stack.Screen name="Exercises" component={ExercisesScreen} />
       <Stack.Screen name="RoutineDetail" component={RoutineDetailScreen} />
+      <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen} />
     </Stack.Navigator>
   );
 }

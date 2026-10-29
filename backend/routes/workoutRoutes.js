@@ -8,7 +8,8 @@ import {
   updateSet,
   deleteSet,
   finishSession,
-  getActiveSession
+  getActiveSession,
+  getSessionById
 } from '../controllers/workoutController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
 
@@ -20,6 +21,9 @@ router.use(verifyToken);
 // 1. Sesiones de entrenamiento
 // - Obtener sesion activa en curso (si existe) para el usuario autenticado
 router.get('/sessions/active', requireRole('member', 'admin'), getActiveSession);
+
+// - Consultar detalle completo y series de una sesion puntual por ID
+router.get('/sessions/:sessionId', getSessionById);
 
 // - Registrar una nueva sesion (socio o admin)
 router.post('/sessions', requireRole('member', 'admin'), createSession);

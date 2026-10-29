@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   RefreshControl,
   TouchableOpacity
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { userService } from '../../Modules/users/userService.js';
@@ -63,7 +63,7 @@ export function AdminDashboardScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
@@ -160,51 +160,54 @@ const styles = StyleSheet.create({
     flex: 1
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    paddingBottom: 40
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 28
   },
   sectionTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.8,
-    marginTop: 14,
-    marginBottom: 8
+    marginTop: 10,
+    marginBottom: 6
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 10
+    gap: 8
   },
   statCard: {
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 8
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    marginVertical: 4
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '900'
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     textTransform: 'uppercase',
-    marginTop: 4
+    marginTop: 3,
+    textAlign: 'center'
   },
   actionCard: {
-    padding: 16,
-    marginTop: 12
+    padding: 14,
+    marginTop: 8,
+    marginVertical: 4
   },
   actionCardHeader: {
-    marginBottom: 12
+    marginBottom: 10
   },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800'
   },
   cardSubtitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3
   }
 });
 

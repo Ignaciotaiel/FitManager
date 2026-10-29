@@ -12,6 +12,11 @@ export const workoutService = {
     return apiClient.post(`/workouts/sessions/${sessionId}/sets`, data, { token });
   },
 
+  // consultar detalle completo y series de una sesion especifica
+  getSessionById: async (sessionId, token) => {
+    return apiClient.get(`/workouts/sessions/${sessionId}`, { token });
+  },
+
   // consultar historial de sesiones (opcionalmente filtrado por member_id)
   getHistory: async (params = {}, token) => {
     const query = new URLSearchParams();
@@ -32,6 +37,17 @@ export const workoutService = {
     if (params.member_id) query.append('member_id', params.member_id);
     const qs = query.toString() ? `?${query.toString()}` : '';
     return apiClient.get(`/workouts/exercises/${exerciseId}/history${qs}`, { token });
+  },
+
+  // obtener sesion activa en curso (si existe) para una rutina
+  getActiveSession: async (routineId, token) => {
+    const qs = routineId ? `?routine_id=${routineId}` : '';
+    return apiClient.get(`/workouts/sessions/active${qs}`, { token });
+  },
+
+  // finalizar formalmente una sesion de entrenamiento
+  finishSession: async (sessionId, token) => {
+    return apiClient.patch(`/workouts/sessions/${sessionId}/finish`, {}, { token });
   },
 
   // corregir kilos o repeticiones de una serie propia

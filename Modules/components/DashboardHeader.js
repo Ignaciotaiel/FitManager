@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import RoleBadge from './RoleBadge.js';
@@ -8,6 +8,7 @@ import ConfirmModal from './ConfirmModal.js';
 export function DashboardHeader({ title, subtitle }) {
   const { colors, isDark, toggleTheme } = useTheme();
   const { user, exitApp, logout } = useAuth();
+  const [menuVisible, setMenuVisible] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -21,58 +22,107 @@ export function DashboardHeader({ title, subtitle }) {
     }
   };
 
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Usuario';
+  const initial = (displayName[0] || 'U').toUpperCase();
+
   return (
     <View style={styles.container}>
-      <View style={styles.topRow}>
-        <View style={styles.userSection}>
-          <Text style={[styles.greeting, { color: colors.textSecondary }]}>
-            hola,
-          </Text>
-          <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>
-            {user?.name || user?.email?.split('@')[0] || 'usuario'}
-          </Text>
-          <RoleBadge role={user?.role} style={styles.badge} />
+      {/* Fila superior: Perfil de usuario a la izquierda y botón de menú a la derecha */}
+      <View style={styles.profileRow}>
+        <View style={styles.avatarAndInfo}>
+          <View style={[styles.avatarCircle, { backgroundColor: colors.surface, borderColor: colors.primary }]}>
+            <Text style={[styles.avatarInitial, { color: colors.primary }]}>{initial}</Text>
+          </View>
+          <View style={styles.userTextCol}>
+            <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>
+              {displayName}
+            </Text>
+            <RoleBadge role={user?.role} style={styles.badge} />
+          </View>
         </View>
 
-        <View style={styles.controlsRow}>
-          <TouchableOpacity
-            onPress={toggleTheme}
-            style={[styles.smallBtn, { borderColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="cambiar modo de color"
-          >
-            <Text style={[styles.smallBtnText, { color: colors.textSecondary }]}>
-              {isDark ? 'CLARO' : 'OSCURO'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Opcion 1: Salir de FitManager (conserva sesion) */}
-          <TouchableOpacity
-            onPress={exitApp}
-            style={[styles.smallBtn, { borderColor: colors.border, backgroundColor: colors.surfaceLight }]}
-            accessibilityRole="button"
-            accessibilityLabel="salir de fitmanager al inicio"
-          >
-            <Text style={[styles.smallBtnText, { color: colors.textSecondary }]}>
-              SALIR
-            </Text>
-          </TouchableOpacity>
-
-          {/* Opcion 2: Cerrar sesion por completo (elimina sesion) */}
-          <TouchableOpacity
-            onPress={() => setShowLogoutConfirm(true)}
-            style={[styles.smallBtn, { borderColor: colors.danger, backgroundColor: colors.dangerSurface }]}
-            accessibilityRole="button"
-            accessibilityLabel="cerrar sesion por completo"
-          >
-            <Text style={[styles.smallBtnText, { color: colors.danger }]}>
-              CERRAR
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Botón de configuración / cuenta */}
+        <TouchableOpacity
+          onPress={() => setMenuVisible(true)}
+          style={[styles.menuTriggerBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          accessibilityRole="button"
+          accessibilityLabel="opciones de cuenta y configuración"
+        >
+          <Text style={[styles.menuTriggerDots, { color: colors.text }]}>☰</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Modal de confirmacion para cerrar sesion definitivamente */}
+      {/* Titulo contextual de la pantalla actual */}
+      {title ? (
+        <View style={styles.titleSection}>
+          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+          {subtitle ? (
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Menú desplegable modal para ajustes rápidos */}
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <Pressable style={[styles.menuBackdrop, { backgroundColor: colors.overlay }]} onPress={() => setMenuVisible(false)}>
+          <View style={[styles.menuModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.menuHeader}>
+              <Text style={[styles.menuTitle, { color: colors.text }]}>MI CUENTA</Text>
+              <Text style={[styles.menuSub, { color: colors.textMuted }]}>{user?.email}</Text>
+            </View>
+
+            <View style={[styles.menuDivider, { backgroundColor: colors.border }]} />
+
+            {/* Alternar modo oscuro / claro */}
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                toggleTheme();
+                setMenuVisible(false);
+              }}
+            >
+              <Text style={[styles.menuItemText, { color: colors.text }]}>
+                {isDark ? '☀️ Modo Claro' : '🌙 Modo Oscuro'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Salir a inicio (conserva sesión) */}
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                exitApp();
+              }}
+            >
+              <Text style={[styles.menuItemText, { color: colors.textSecondary }]}>
+                🚪 Salir al inicio
+              </Text>
+            </TouchableOpacity>
+
+            <View style={[styles.menuDivider, { backgroundColor: colors.border }]} />
+
+            {/* Cerrar sesión */}
+            <TouchableOpacity
+              style={[styles.menuItem, styles.menuItemDanger]}
+              onPress={() => {
+                setMenuVisible(false);
+                setShowLogoutConfirm(true);
+              }}
+            >
+              <Text style={[styles.menuItemText, { color: colors.danger, fontWeight: '800' }]}>
+                ✕ Cerrar sesión por completo
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Modal de confirmación para cerrar sesión */}
       <ConfirmModal
         visible={showLogoutConfirm}
         title="cerrar sesión por completo"
@@ -84,75 +134,122 @@ export function DashboardHeader({ title, subtitle }) {
         onConfirm={handleConfirmLogout}
         onCancel={() => setShowLogoutConfirm(false)}
       />
-
-      {title ? (
-        <View style={styles.titleSection}>
-          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
-          {subtitle ? (
-            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
-          ) : null}
-        </View>
-      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 12,
+    paddingTop: 4,
+    paddingBottom: 6,
     marginBottom: 8
   },
-  topRow: {
+  profileRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start'
+    alignItems: 'center'
   },
-  userSection: {
+  avatarAndInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
     flex: 1,
-    paddingRight: 10
+    paddingRight: 12
   },
-  greeting: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5
+  avatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10
+  },
+  avatarInitial: {
+    fontSize: 20,
+    fontWeight: '900'
+  },
+  userTextCol: {
+    flex: 1
   },
   userName: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '900',
-    marginTop: 2,
     letterSpacing: 0.3
   },
   badge: {
-    marginTop: 6
+    marginTop: 3
   },
-  controlsRow: {
-    flexDirection: 'row',
-    gap: 8,
+  menuTriggerBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
     alignItems: 'center'
   },
-  smallBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  smallBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5
+  menuTriggerDots: {
+    fontSize: 20,
+    fontWeight: '900'
   },
   titleSection: {
-    marginTop: 16
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)'
   },
   title: {
-    fontSize: 20,
-    fontWeight: '800'
+    fontSize: 18,
+    fontWeight: '900',
+    letterSpacing: 0.4
   },
   subtitle: {
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16
+  },
+  menuBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 56,
+    paddingRight: 16
+  },
+  menuModal: {
+    width: 250,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 8
+  },
+  menuHeader: {
+    paddingBottom: 8
+  },
+  menuTitle: {
     fontSize: 13,
-    marginTop: 4,
-    lineHeight: 18
+    fontWeight: '900',
+    letterSpacing: 0.5
+  },
+  menuSub: {
+    fontSize: 11,
+    marginTop: 2
+  },
+  menuDivider: {
+    height: 1,
+    marginVertical: 6
+  },
+  menuItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 6
+  },
+  menuItemDanger: {
+    paddingVertical: 10
+  },
+  menuItemText: {
+    fontSize: 13,
+    fontWeight: '700'
   }
 });
 

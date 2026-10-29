@@ -66,18 +66,19 @@ export function Button({
 
 const styles = StyleSheet.create({
   baseButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 50,
-    marginVertical: 6
+    minHeight: 48,
+    marginVertical: 4
   },
   baseText: {
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.3
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textAlign: 'center'
   }
 });
 
