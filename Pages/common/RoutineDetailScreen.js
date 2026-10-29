@@ -21,7 +21,8 @@ import {
   Button,
   StatusBanner,
   LoadingSpinner,
-  EmptyState
+  EmptyState,
+  ConfirmModal
 } from '../../Modules/components/index.js';
 
 export function RoutineDetailScreen({ route, navigation }) {
@@ -41,13 +42,33 @@ export function RoutineDetailScreen({ route, navigation }) {
   const [registeredSets, setRegisteredSets] = useState({}); // { [routine_exercise_id]: Array of logged sets }
   const [lastLogs, setLastLogs] = useState({}); // { [exercise_id]: { weight_kg, reps_completed } }
 
-  // Modal para registrar una serie puntual
+  // Cronómetro en vivo de duración de sesión
+  const [elapsedDuration, setElapsedDuration] = useState('00:00:00');
+
+  // Modal para registrar una serie puntual (crear)
   const [logModalVisible, setLogModalVisible] = useState(false);
   const [targetExercise, setTargetExercise] = useState(null);
   const [inputWeight, setInputWeight] = useState('');
   const [inputReps, setInputReps] = useState('');
   const [submittingSet, setSubmittingSet] = useState(false);
   const [modalError, setModalError] = useState(null);
+
+  // Modal para editar una serie existente
+  const [editSetModalVisible, setEditSetModalVisible] = useState(false);
+  const [editingSet, setEditingSet] = useState(null);
+  const [editWeight, setEditWeight] = useState('');
+  const [editReps, setEditReps] = useState('');
+  const [editingTargetExercise, setEditingTargetExercise] = useState(null);
+  const [savingEditSet, setSavingEditSet] = useState(false);
+  const [editSetError, setEditSetError] = useState(null);
+
+  // Modal de confirmación para eliminar una serie
+  const [deleteSetModal, setDeleteSetModal] = useState({
+    visible: false,
+    setId: null,
+    exerciseKey: null,
+    loading: false
+  });
 
   const loadRoutineDetail = useCallback(async () => {
     if (!routineId) {
@@ -267,6 +288,132 @@ export function RoutineDetailScreen({ route, navigation }) {
     }
   };
 
+  // Cronómetro en vivo que actualiza elapsedDuration cada segundo mientras activeSession exista
+  useEffect(() => {
+    if (!activeSession) {
+      setElapsedDuration('00:00:00');
+      return;
+    }
+
+    const startTimestamp = activeSession.created_at || activeSession.session_date;
+    if (!startTimestamp) return;
+    const startMs = new Date(startTimestamp).getTime();
+    if (isNaN(startMs)) return;
+
+    const updateTimer = () => {
+      const nowMs = Date.now();
+      const diffSec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+      const hours = Math.floor(diffSec / 3600);
+      const minutes = Math.floor((diffSec % 3600) / 60);
+      const seconds = Math.floor(diffSec % 60);
+      setElapsedDuration(
+        `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+      );
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [activeSession]);
+
+  // Abrir modal para editar una serie ya registrada
+  const handleOpenEditSet = (set, exercise) => {
+    setEditingSet(set);
+    setEditingTargetExercise(exercise);
+    setEditWeight(String(set.weight_kg));
+    setEditReps(String(set.reps_completed));
+    setEditSetError(null);
+    setEditSetModalVisible(true);
+  };
+
+  // Guardar cambios en serie editada
+  const handleSaveEditSet = async () => {
+    if (!editingSet) return;
+    const weightNum = parseFloat(editWeight);
+    if (isNaN(weightNum) || weightNum < 0) {
+      setEditSetError('Ingresa un peso válido en kg (ej. 45 o 60.5)');
+      return;
+    }
+    const repsNum = parseInt(editReps, 10);
+    if (isNaN(repsNum) || repsNum <= 0) {
+      setEditSetError('Ingresa una cantidad de repeticiones válida');
+      return;
+    }
+
+    setSavingEditSet(true);
+    setEditSetError(null);
+
+    try {
+      const res = await workoutService.updateSet(
+        editingSet.id,
+        {
+          weight_kg: weightNum,
+          reps_completed: repsNum
+        },
+        token
+      );
+
+      if (res?.ok) {
+        const key = editingTargetExercise?.routine_exercise_id || editingSet.routine_exercise_id || editingSet.exercise_id;
+        setRegisteredSets(prev => {
+          const list = prev[key] || [];
+          return {
+            ...prev,
+            [key]: list.map(s => s.id === editingSet.id ? { ...s, weight_kg: weightNum, reps_completed: repsNum } : s)
+          };
+        });
+
+        // Actualizar último log sugerido si era la serie más reciente
+        setLastLogs(prev => ({
+          ...prev,
+          [editingSet.exercise_id]: { weight_kg: weightNum, reps_completed: repsNum }
+        }));
+
+        setEditSetModalVisible(false);
+      }
+    } catch (err) {
+      setEditSetError(err.message || 'error al actualizar la serie');
+    } finally {
+      setSavingEditSet(false);
+    }
+  };
+
+  // Abrir confirmación para eliminar serie
+  const handlePromptDeleteSet = (set, exerciseKey) => {
+    setDeleteSetModal({
+      visible: true,
+      setId: set.id,
+      exerciseKey,
+      loading: false
+    });
+  };
+
+  // Confirmar eliminación de la serie con re-numeración
+  const handleConfirmDeleteSet = async () => {
+    const { setId, exerciseKey } = deleteSetModal;
+    if (!setId) return;
+
+    setDeleteSetModal(prev => ({ ...prev, loading: true }));
+    try {
+      await workoutService.deleteSet(setId, token);
+
+      setRegisteredSets(prev => {
+        const list = (prev[exerciseKey] || []).filter(s => s.id !== setId);
+        // Renumerar correlativamente en el estado local
+        const renumbered = list.map((s, idx) => ({ ...s, set_number: idx + 1 }));
+        return {
+          ...prev,
+          [exerciseKey]: renumbered
+        };
+      });
+
+      setDeleteSetModal({ visible: false, setId: null, exerciseKey: null, loading: false });
+    } catch (err) {
+      setErrorMessage(err.message || 'no fue posible eliminar la serie');
+      setDeleteSetModal({ visible: false, setId: null, exerciseKey: null, loading: false });
+    }
+  };
+
   const [finishingSession, setFinishingSession] = useState(false);
 
   // Finalizar formalmente la sesion activa en backend
@@ -275,10 +422,11 @@ export function RoutineDetailScreen({ route, navigation }) {
     setFinishingSession(true);
     setErrorMessage(null);
     try {
-      await workoutService.finishSession(activeSession.id, token);
+      const res = await workoutService.finishSession(activeSession.id, token);
+      const finalDuration = res?.data?.session?.duration_formatted || elapsedDuration;
       setActiveSession(null);
       setRegisteredSets({});
-      setSuccessMessage('¡Excelente! Sesión finalizada con éxito y registrada en tu historial.');
+      setSuccessMessage(`¡Excelente! Sesión finalizada con éxito. Duración total: ${finalDuration}. Registrada en tu historial.`);
     } catch (err) {
       setErrorMessage(err.message || 'no fue posible finalizar la sesión');
     } finally {
@@ -390,6 +538,11 @@ export function RoutineDetailScreen({ route, navigation }) {
                         <Text style={[styles.activeSessionTitle, { color: colors.primary }]}>
                           SESIÓN EN CURSO
                         </Text>
+                        <View style={[styles.timerBadge, { backgroundColor: colors.surface, borderColor: colors.primary }]}>
+                          <Text style={[styles.timerText, { color: colors.primary }]}>
+                            ⏱ {elapsedDuration}
+                          </Text>
+                        </View>
                       </View>
                       <Button
                         title="FINALIZAR ENTRENAMIENTO"
@@ -458,7 +611,7 @@ export function RoutineDetailScreen({ route, navigation }) {
                       )}
                     </View>
 
-                    {/* Series registradas en esta sesion activa */}
+                    {/* Series registradas en esta sesion activa con opciones para editar y eliminar */}
                     {setsLogged.length > 0 && (
                       <View style={styles.completedSetsSection}>
                         <Text style={[styles.completedSetsTitle, { color: colors.primary }]}>
@@ -470,6 +623,28 @@ export function RoutineDetailScreen({ route, navigation }) {
                               <Text style={[styles.setChipText, { color: colors.text }]}>
                                 #{s.set_number}: <Text style={{ color: colors.primary, fontWeight: '800' }}>{s.weight_kg} kg</Text> x {s.reps_completed}
                               </Text>
+                              {activeSession && user?.role === 'member' && (
+                                <View style={styles.setChipActions}>
+                                  <TouchableOpacity
+                                    onPress={() => handleOpenEditSet(s, ex)}
+                                    style={styles.setActionButton}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`editar serie ${s.set_number}`}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  >
+                                    <Text style={[styles.setActionIcon, { color: colors.textSecondary }]}>✏️</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    onPress={() => handlePromptDeleteSet(s, ex.routine_exercise_id)}
+                                    style={styles.setActionButton}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`eliminar serie ${s.set_number}`}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                  >
+                                    <Text style={[styles.setActionIcon, { color: colors.danger || '#ff4444' }]}>✕</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              )}
                             </View>
                           ))}
                         </View>
@@ -578,6 +753,76 @@ export function RoutineDetailScreen({ route, navigation }) {
             </View>
           </KeyboardAvoidingView>
         </Modal>
+
+        {/* Modal de Edición de Serie */}
+        <Modal
+          visible={editSetModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setEditSetModalVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={[styles.modalBackdrop, { backgroundColor: colors.overlay }]}
+          >
+            <View style={[styles.modalContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                EDITAR SERIE #{editingSet?.set_number}
+              </Text>
+              <Text style={[styles.modalSubtitle, { color: colors.primary, fontWeight: '700' }]}>
+                {editingTargetExercise?.name || 'Ejercicio'}
+              </Text>
+
+              {editSetError && <StatusBanner message={editSetError} type="error" />}
+
+              <Input
+                label="PESO CORREGIDO (KG)"
+                placeholder="ej. 65"
+                value={editWeight}
+                onChangeText={setEditWeight}
+                keyboardType="numeric"
+              />
+
+              <Input
+                label="REPETICIONES CORREGIDAS"
+                placeholder="ej. 10"
+                value={editReps}
+                onChangeText={setEditReps}
+                keyboardType="numeric"
+              />
+
+              <View style={styles.modalActions}>
+                <Button
+                  title="CANCELAR"
+                  variant="secondary"
+                  onPress={() => setEditSetModalVisible(false)}
+                  style={styles.modalBtn}
+                />
+                <Button
+                  title="GUARDAR CAMBIOS"
+                  variant="primary"
+                  onPress={handleSaveEditSet}
+                  loading={savingEditSet}
+                  disabled={savingEditSet}
+                  style={styles.modalBtn}
+                />
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Modal de Confirmación para eliminar serie */}
+        <ConfirmModal
+          visible={deleteSetModal.visible}
+          title="¿ELIMINAR SERIE?"
+          message="Esta acción quitará el registro de la serie y renumerará automáticamente las series restantes de este ejercicio."
+          confirmText="SÍ, ELIMINAR"
+          cancelText="CANCELAR"
+          isDestructive
+          loading={deleteSetModal.loading}
+          onConfirm={handleConfirmDeleteSet}
+          onCancel={() => setDeleteSetModal({ visible: false, setId: null, exerciseKey: null, loading: false })}
+        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -733,6 +978,18 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.8
   },
+  timerBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    marginLeft: 'auto'
+  },
+  timerText: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.8
+  },
   sectionTitleRow: {
     marginTop: 4,
     marginBottom: 8
@@ -826,13 +1083,29 @@ const styles = StyleSheet.create({
     gap: 4
   },
   setChip: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1
+    paddingLeft: 8,
+    paddingRight: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
   },
   setChipText: {
     fontSize: 11
+  },
+  setChipActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4
+  },
+  setActionButton: {
+    padding: 2
+  },
+  setActionIcon: {
+    fontSize: 11,
+    fontWeight: '800'
   },
   logSetBtn: {
     marginVertical: 4

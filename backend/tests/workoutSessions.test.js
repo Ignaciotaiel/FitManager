@@ -214,7 +214,10 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
           return res.status(403).json({ ok: false, error: { message: 'prohibido', code: 'FORBIDDEN' } });
         }
         if (role === 'trainer') {
-          const hasAccess = mockRoutines.some(r => r.trainer_id === authUserId && r.member_id === queryMemberId);
+          const hasAccess = mockRoutines.some(r => {
+            const memberUser = mockUsers.find(u => u.id === queryMemberId);
+            return r.trainer_id === authUserId && r.member_id === queryMemberId && memberUser && memberUser.is_active === 1;
+          });
           if (!hasAccess) {
             return res.status(403).json({ ok: false, error: { message: 'sin vinculo con el socio', code: 'FORBIDDEN' } });
           }
@@ -292,8 +295,27 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
         return res.status(400).json({ ok: false, error: { message: 'sesion completada', code: 'SESSION_COMPLETED' } });
       }
 
-      mockSetLogs.splice(index, 1);
-      return res.status(200).json({ ok: true, message: 'serie eliminada' });
+      const deleted = mockSetLogs.splice(index, 1)[0];
+
+      // Renumerar correlativamente las series restantes del mismo ejercicio en esta sesion
+      const remaining = mockSetLogs
+        .filter(s => s.session_id === deleted.session_id && s.exercise_id === deleted.exercise_id)
+        .sort((a, b) => a.set_number - b.set_number);
+      remaining.forEach((s, idx) => {
+        s.set_number = idx + 1;
+      });
+
+      return res.status(200).json({ ok: true, message: 'serie eliminada', data: { id: setId } });
+    });
+
+    // 6.1 GET /api/workouts/trainer/members
+    app.get('/api/workouts/trainer/members', testVerifyToken, testRequireRole('trainer', 'admin'), (req, res) => {
+      const trainerId = req.user.id;
+      const assignedMemberIds = [
+        ...new Set(mockRoutines.filter(r => r.trainer_id === trainerId && r.member_id).map(r => r.member_id))
+      ];
+      const members = mockUsers.filter(u => assignedMemberIds.includes(u.id) && u.role === 'member' && u.is_active === 1);
+      return res.status(200).json({ ok: true, data: { members } });
     });
 
     // 7. PATCH /api/workouts/sessions/:sessionId/finish
@@ -308,7 +330,23 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       }
       session.status = 'completed';
       session.ended_at = new Date().toISOString();
-      return res.status(200).json({ ok: true, data: { session } });
+      const startMs = new Date(session.created_at || session.session_date).getTime();
+      const endMs = new Date(session.ended_at).getTime();
+      const diffSec = Math.max(0, Math.floor((endMs - startMs) / 1000));
+      const hours = Math.floor(diffSec / 3600);
+      const minutes = Math.floor((diffSec % 3600) / 60);
+      const seconds = Math.floor(diffSec % 60);
+      const duration_formatted = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      return res.status(200).json({
+        ok: true,
+        data: {
+          session: {
+            ...session,
+            duration_seconds: diffSec,
+            duration_formatted
+          }
+        }
+      });
     });
 
     // 8. GET /api/workouts/sessions/active (DEBE IR ANTES DE /:sessionId PARA NO SER CAPTURADO COMO PARÁMETRO)
@@ -339,7 +377,10 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
         return res.status(403).json({ ok: false, error: { message: 'no tienes permiso', code: 'FORBIDDEN' } });
       }
       if (role === 'trainer' && Number(session.user_id) !== Number(authUserId)) {
-        const hasAccess = mockRoutines.some(r => r.trainer_id === authUserId && r.member_id === session.user_id);
+        const hasAccess = mockRoutines.some(r => {
+          const memberUser = mockUsers.find(u => u.id === session.user_id);
+          return r.trainer_id === authUserId && r.member_id === session.user_id && memberUser && memberUser.is_active === 1;
+        });
         if (!hasAccess) {
           return res.status(403).json({ ok: false, error: { message: 'sin vinculo con el socio', code: 'FORBIDDEN' } });
         }
@@ -1020,6 +1061,291 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
     });
     assert.strictEqual(aliceRes.status, 403);
   });
+
+  test('21. Mejora 1: Edición y eliminación de series con renumeración correlativa', async () => {
+    const tokenAlice = makeToken(mockUsers[2]); // Alice (id: 3)
+
+    // Crear sesión nueva para Alice
+    const startRes = await fetch(`${baseUrl}/api/workouts/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ routine_id: 10, notes: 'Sesion test renumeracion' })
+    });
+    const startJson = await startRes.json();
+    const sessionId = startJson.data.session.id;
+
+    // Agregar 3 series del ejercicio 1: #1, #2, #3
+    const s1 = await (await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ exercise_id: 1, set_number: 1, weight_kg: 50, reps_completed: 10 })
+    })).json();
+
+    const s2 = await (await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ exercise_id: 1, set_number: 2, weight_kg: 55, reps_completed: 8 })
+    })).json();
+
+    const s3 = await (await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ exercise_id: 1, set_number: 3, weight_kg: 60, reps_completed: 6 })
+    })).json();
+
+    // 1. Editar la serie #2 (cambiar a 57.5 kg y 9 reps)
+    const updateRes = await fetch(`${baseUrl}/api/workouts/sets/${s2.data.set.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ weight_kg: 57.5, reps_completed: 9 })
+    });
+    const updateJson = await updateRes.json();
+    assert.strictEqual(updateRes.status, 200);
+    assert.strictEqual(updateJson.data.set.weight_kg, 57.5);
+    assert.strictEqual(updateJson.data.set.reps_completed, 9);
+
+    // 2. Eliminar la serie #2 intermedia
+    const delRes = await fetch(`${baseUrl}/api/workouts/sets/${s2.data.set.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    assert.strictEqual(delRes.status, 200);
+
+    // 3. Verificar que la serie #3 ahora fue renumerada a #2
+    const activeRes = await fetch(`${baseUrl}/api/workouts/sessions/active?routine_id=10`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const activeJson = await activeRes.json();
+    const remainingSets = activeJson.data.active_session.sets;
+    assert.strictEqual(remainingSets.length, 2);
+    assert.strictEqual(remainingSets[0].id, s1.data.set.id);
+    assert.strictEqual(remainingSets[0].set_number, 1);
+    assert.strictEqual(remainingSets[1].id, s3.data.set.id);
+    assert.strictEqual(remainingSets[1].set_number, 2); // Renumerada consecutivamente a 2
+
+    // Finalizar sesión para limpiar estado
+    await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/finish`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+  });
+
+  test('22. Mejora 2: Duración total del entrenamiento calculada y congelada', async () => {
+    const tokenAlice = makeToken(mockUsers[2]);
+
+    // Crear sesión
+    const startRes = await fetch(`${baseUrl}/api/workouts/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ routine_id: 10, notes: 'Sesion test duracion' })
+    });
+    const startJson = await startRes.json();
+    const sessionId = startJson.data.session.id;
+
+    // Finalizar sesión y verificar que el payload devuelve duration_seconds y duration_formatted (HH:MM:SS)
+    const finishRes = await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/finish`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const finishJson = await finishRes.json();
+    assert.strictEqual(finishRes.status, 200);
+    assert.strictEqual(typeof finishJson.data.session.duration_seconds, 'number');
+    assert.strictEqual(typeof finishJson.data.session.duration_formatted, 'string');
+    assert.match(finishJson.data.session.duration_formatted, /^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  test('23. Mejora 4: Consulta de alumnos asignados al entrenador y seguridad de historial', async () => {
+    const tokenTrainer = makeToken(mockUsers[1]);   // Trainer John (id: 2)
+    const tokenStranger = makeToken(mockUsers[4]);  // Trainer Stranger (id: 5)
+
+    // Trainer John tiene asignada a Alice (id: 3) en routine 10
+    const listRes = await fetch(`${baseUrl}/api/workouts/trainer/members`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    const listJson = await listRes.json();
+    assert.strictEqual(listRes.status, 200);
+    assert.strictEqual(Array.isArray(listJson.data.members), true);
+    const hasAlice = listJson.data.members.some(m => m.id === 3);
+    assert.strictEqual(hasAlice, true);
+
+    // Trainer John puede consultar el historial de Alice
+    const historyAlice = await fetch(`${baseUrl}/api/workouts/history?member_id=3`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(historyAlice.status, 200);
+
+    // Trainer John NO puede consultar a Bob (id: 4) asignado a otro trainer -> 403 Forbidden
+    const historyBobForbidden = await fetch(`${baseUrl}/api/workouts/history?member_id=4`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(historyBobForbidden.status, 403);
+  });
+
+  test('24. Seguridad de Entrenador: Desasignar alumno de rutina revoca acceso inmediatamente', async () => {
+    const tokenTrainer = makeToken(mockUsers[1]); // Trainer John (id: 2)
+
+    // Desasignar a Alice (id: 3) de la rutina 10 quitando su member_id
+    const targetRoutine = mockRoutines.find(r => r.id === 10);
+    assert.notStrictEqual(targetRoutine, undefined);
+    targetRoutine.member_id = null; // Simula desasignación completa
+
+    // Trainer John ya NO debe ver a Alice en su listado
+    const listRes = await fetch(`${baseUrl}/api/workouts/trainer/members`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    const listJson = await listRes.json();
+    const hasAlice = listJson.data.members.some(m => m.id === 3);
+    assert.strictEqual(hasAlice, false);
+
+    // Trainer John ahora es rechazado con 403 al intentar consultar su historial
+    const historyAliceAfter = await fetch(`${baseUrl}/api/workouts/history?member_id=3`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(historyAliceAfter.status, 403);
+
+    // Restaurar asignación para no afectar pruebas subsiguientes
+    targetRoutine.member_id = 3;
+  });
+
+  test('25. Duración y Fechas: Sesiones históricas con status/ended_at NULL no inventan duración', async () => {
+    const tokenAlice = makeToken(mockUsers[2]);
+
+    // Crear sesión histórica legacy sin status ni ended_at
+    const legacySession = {
+      id: nextSessionId++,
+      user_id: 3,
+      routine_id: 10,
+      session_date: '2026-05-10T14:30:00Z',
+      status: null,
+      ended_at: null,
+      notes: 'Sesion historica antigua'
+    };
+    mockSessions.push(legacySession);
+
+    const historyRes = await fetch(`${baseUrl}/api/workouts/history`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const historyJson = await historyRes.json();
+    const foundLegacy = historyJson.data.sessions.find(s => s.id === legacySession.id);
+
+    assert.notStrictEqual(foundLegacy, undefined);
+    assert.strictEqual(foundLegacy.status, null);
+    // Verificar que nunca se inventa duración para registros antiguos
+    assert.strictEqual(foundLegacy.duration_seconds, undefined);
+  });
+
+  test('26. Concurrencia e Integridad: No se puede agregar, editar ni eliminar series en una sesión finalizada', async () => {
+    const tokenAlice = makeToken(mockUsers[2]); // Alice (id: 3)
+
+    // Crear una nueva sesión
+    const startRes = await fetch(`${baseUrl}/api/workouts/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ routine_id: 10, notes: 'Sesion para probar proteccion contra modificacion post-finalizado' })
+    });
+    const startJson = await startRes.json();
+    const sessionId = startJson.data.session.id;
+
+    // Agregar una serie mientras está activa
+    const addRes = await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ exercise_id: 1, set_number: 1, weight_kg: 50, reps_completed: 10 })
+    });
+    const addJson = await addRes.json();
+    assert.strictEqual(addRes.status, 201);
+    const setId = addJson.data.set.id;
+
+    // Finalizar la sesión
+    const finishRes = await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/finish`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    assert.strictEqual(finishRes.status, 200);
+
+    // 1. Intentar agregar serie a la sesión finalizada -> debe fallar con 400 y code SESSION_COMPLETED
+    const rejectedAdd = await fetch(`${baseUrl}/api/workouts/sessions/${sessionId}/sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ exercise_id: 1, set_number: 2, weight_kg: 55, reps_completed: 8 })
+    });
+    const rejAddJson = await rejectedAdd.json();
+    assert.strictEqual(rejectedAdd.status, 400);
+    assert.strictEqual(rejAddJson.error.code, 'SESSION_COMPLETED');
+
+    // 2. Intentar editar la serie de la sesión finalizada -> debe fallar con 400 y code SESSION_COMPLETED
+    const rejectedUpdate = await fetch(`${baseUrl}/api/workouts/sets/${setId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ weight_kg: 60 })
+    });
+    const rejUpdJson = await rejectedUpdate.json();
+    assert.strictEqual(rejectedUpdate.status, 400);
+    assert.strictEqual(rejUpdJson.error.code, 'SESSION_COMPLETED');
+
+    // 3. Intentar eliminar la serie de la sesión finalizada -> debe fallar con 400 y code SESSION_COMPLETED
+    const rejectedDelete = await fetch(`${baseUrl}/api/workouts/sets/${setId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const rejDelJson = await rejectedDelete.json();
+    assert.strictEqual(rejectedDelete.status, 400);
+    assert.strictEqual(rejDelJson.error.code, 'SESSION_COMPLETED');
+  });
+
+  test('27. Acceso de Entrenador: Socio inactivo (is_active = 0) no aparece en listado ni en historial ni en detalle', async () => {
+    const tokenTrainer = makeToken(mockUsers[1]); // Trainer John (id: 2)
+
+    // Crear un socio inactivo asignado a una rutina de Trainer John
+    const inactiveUser = {
+      id: 999,
+      username: 'inactive_member',
+      email: 'inactive@test.com',
+      role: 'member',
+      is_active: 0
+    };
+    mockUsers.push(inactiveUser);
+
+    mockRoutines.push({
+      id: 999,
+      name: 'Rutina Socio Inactivo',
+      trainer_id: 2,
+      member_id: 999
+    });
+
+    const inactiveSession = {
+      id: nextSessionId++,
+      user_id: 999,
+      routine_id: 999,
+      session_date: new Date().toISOString(),
+      status: 'completed',
+      ended_at: new Date().toISOString(),
+      notes: 'Sesion de socio inactivo'
+    };
+    mockSessions.push(inactiveSession);
+
+    // 1. Verificar que el socio inactivo NO aparece en GET /trainer/members
+    const membersRes = await fetch(`${baseUrl}/api/workouts/trainer/members`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    const membersJson = await membersRes.json();
+    assert.strictEqual(membersRes.status, 200);
+    const foundInactive = membersJson.data.members.some(m => m.id === 999);
+    assert.strictEqual(foundInactive, false);
+
+    // 2. Verificar que Trainer John NO puede consultar su historial -> 403 Forbidden
+    const historyRes = await fetch(`${baseUrl}/api/workouts/history?member_id=999`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(historyRes.status, 403);
+
+    // 3. Verificar que Trainer John NO puede consultar el detalle de su sesión -> 403 Forbidden
+    const detailRes = await fetch(`${baseUrl}/api/workouts/sessions/${inactiveSession.id}`, {
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(detailRes.status, 403);
+  });
 });
+
 
 

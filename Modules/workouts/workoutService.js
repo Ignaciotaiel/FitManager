@@ -58,6 +58,11 @@ export const workoutService = {
   // eliminar una serie propia
   deleteSet: async (setId, token) => {
     return apiClient.delete(`/workouts/sets/${setId}`, { token });
+  },
+
+  // obtener lista de socios asignados al entrenador autenticado
+  getTrainerMembers: async (token) => {
+    return apiClient.get('/workouts/trainer/members', { token });
   }
 };
 

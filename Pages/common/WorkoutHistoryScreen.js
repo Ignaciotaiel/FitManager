@@ -16,6 +16,7 @@ import { workoutService } from '../../Modules/workouts/workoutService.js';
 import {
   DashboardHeader,
   Card,
+  Input,
   Button,
   StatusBanner,
   LoadingSpinner,
@@ -26,11 +27,18 @@ export function WorkoutHistoryScreen({ route, navigation }) {
   const { colors } = useTheme();
   const { token, user } = useAuth();
   const targetMemberId = route?.params?.memberId; // Para cuando un trainer o admin consulta el historial de un alumno
+  const targetMemberName = route?.params?.memberName;
 
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+
+  // Estados de búsqueda y filtros
+  const [searchRoutine, setSearchRoutine] = useState('');
+  const [searchExercise, setSearchExercise] = useState('');
+  const [filterDate, setFilterDate] = useState(''); // Formato YYYY-MM-DD
+  const [showFilters, setShowFilters] = useState(false);
 
   // Modal para ver el detalle de una sesión puntual y sus series
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -89,6 +97,44 @@ export function WorkoutHistoryScreen({ route, navigation }) {
     } finally {
       setLoadingDetail(false);
     }
+  };
+
+  // Filtrado y búsqueda del historial en tiempo real
+  const filteredSessions = useMemo(() => {
+    return sessions.filter(session => {
+      // 1. Filtro por nombre de rutina
+      if (searchRoutine.trim()) {
+        const query = searchRoutine.toLowerCase().trim();
+        const routineName = (session.routine_name || 'entrenamiento libre').toLowerCase();
+        if (!routineName.includes(query)) return false;
+      }
+
+      // 2. Filtro por nombre de ejercicio
+      if (searchExercise.trim()) {
+        const query = searchExercise.toLowerCase().trim();
+        const hasMatchingExercise = Array.isArray(session.sets) && session.sets.some(s =>
+          s.exercise_name && s.exercise_name.toLowerCase().includes(query)
+        );
+        if (!hasMatchingExercise) return false;
+      }
+
+      // 3. Filtro por fecha (YYYY-MM-DD o coincidencia de día)
+      if (filterDate.trim()) {
+        const qDate = filterDate.trim();
+        const sessionDateStr = session.session_date ? String(session.session_date) : '';
+        if (!sessionDateStr.includes(qDate)) return false;
+      }
+
+      return true;
+    });
+  }, [sessions, searchRoutine, searchExercise, filterDate]);
+
+  const hasActiveFilters = Boolean(searchRoutine.trim() || searchExercise.trim() || filterDate.trim());
+
+  const handleClearFilters = () => {
+    setSearchRoutine('');
+    setSearchExercise('');
+    setFilterDate('');
   };
 
   // Agrupar las series de la sesión seleccionada por ejercicio para mostrarlas ordenadas
@@ -161,7 +207,7 @@ export function WorkoutHistoryScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* Resumen de series y ejercicios */}
+        {/* Resumen de series, ejercicios y duración */}
         <View style={[styles.statsRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.statBox}>
             <Text style={[styles.statLabel, { color: colors.textMuted }]}>SERIES LOGRADAS</Text>
@@ -171,6 +217,12 @@ export function WorkoutHistoryScreen({ route, navigation }) {
             <Text style={[styles.statLabel, { color: colors.textMuted }]}>EJERCICIOS</Text>
             <Text style={[styles.statVal, { color: colors.text }]}>
               {uniqueExercises.length} ejercicio(s)
+            </Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={[styles.statLabel, { color: colors.textMuted }]}>DURACIÓN</Text>
+            <Text style={[styles.statVal, { color: item.duration_formatted ? colors.primary : colors.textMuted }]}>
+              {item.duration_formatted ? item.duration_formatted : (item.status === 'in_progress' ? 'En curso' : 'No disponible')}
             </Text>
           </View>
         </View>
@@ -220,17 +272,67 @@ export function WorkoutHistoryScreen({ route, navigation }) {
         </View>
 
         <DashboardHeader
-          title="HISTORIAL DE ENTRENAMIENTOS"
-          subtitle="registro cronológico de tus sesiones y marcas logradas"
+          title={targetMemberName ? `HISTORIAL: ${targetMemberName.toUpperCase()}` : "HISTORIAL DE ENTRENAMIENTOS"}
+          subtitle={targetMemberName ? "seguimiento y marcas del alumno" : "registro cronológico de tus sesiones y marcas logradas"}
         />
 
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
+
+        {/* Barra de Filtros y Búsqueda */}
+        <View style={[styles.filterCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.filterHeaderRow}>
+            <Text style={[styles.filterHeaderTitle, { color: colors.text }]}>
+              🔍 FILTROS Y BÚSQUEDA {hasActiveFilters ? `(${filteredSessions.length} resultados)` : ''}
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowFilters(prev => !prev)}
+              style={[styles.toggleFilterBtn, { borderColor: colors.border }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.toggleFilterText, { color: colors.primary }]}>
+                {showFilters ? 'OCULTAR ▲' : 'EXPANDIR ▼'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {showFilters && (
+            <View style={styles.filterInputsContainer}>
+              <Input
+                label="BUSCAR POR RUTINA"
+                placeholder="ej. Fuerza, Piernas, Libre"
+                value={searchRoutine}
+                onChangeText={setSearchRoutine}
+              />
+              <Input
+                label="BUSCAR POR EJERCICIO"
+                placeholder="ej. Press de Banca, Sentadilla"
+                value={searchExercise}
+                onChangeText={setSearchExercise}
+              />
+              <Input
+                label="FILTRAR POR FECHA (AAAA-MM-DD)"
+                placeholder="ej. 2026-10-28"
+                value={filterDate}
+                onChangeText={setFilterDate}
+              />
+
+              {hasActiveFilters && (
+                <Button
+                  title="LIMPIAR TODOS LOS FILTROS ✕"
+                  variant="secondary"
+                  onPress={handleClearFilters}
+                  style={styles.clearFiltersBtn}
+                />
+              )}
+            </View>
+          )}
+        </View>
 
         {loading ? (
           <LoadingSpinner message="cargando historial..." fullScreen />
         ) : (
           <FlatList
-            data={sessions}
+            data={filteredSessions}
             keyExtractor={item => String(item.id)}
             renderItem={renderSessionItem}
             contentContainerStyle={styles.listContent}
@@ -240,8 +342,8 @@ export function WorkoutHistoryScreen({ route, navigation }) {
             }
             ListEmptyComponent={
               <EmptyState
-                title="sin entrenamientos registrados"
-                description="cuando finalices tu primer entrenamiento, vas a poder consultar el detalle de todos tus pesos y repeticiones acá."
+                title={hasActiveFilters ? "sin resultados para los filtros" : "sin entrenamientos registrados"}
+                description={hasActiveFilters ? "probá ajustando el nombre de la rutina, ejercicio o fecha." : "cuando finalices tu primer entrenamiento, vas a poder consultar el detalle de todos tus pesos y repeticiones acá."}
               />
             }
           />
@@ -271,6 +373,11 @@ export function WorkoutHistoryScreen({ route, navigation }) {
                   <Text style={[styles.modalTitle, { color: colors.text }]}>
                     {selectedSession?.routine_name || 'Entrenamiento Libre'}
                   </Text>
+                  {selectedSession?.duration_formatted ? (
+                    <Text style={[styles.modalDuration, { color: colors.primary }]}>
+                      ⏱ Duración total: {selectedSession.duration_formatted}
+                    </Text>
+                  ) : null}
                 </View>
 
                 <TouchableOpacity
@@ -384,6 +491,44 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 32
+  },
+  filterCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14
+  },
+  filterHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  filterHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.5
+  },
+  toggleFilterBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1
+  },
+  toggleFilterText: {
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  filterInputsContainer: {
+    marginTop: 10,
+    gap: 6
+  },
+  clearFiltersBtn: {
+    marginTop: 6
+  },
+  modalDuration: {
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 2
   },
   sessionCard: {
     marginBottom: 14,

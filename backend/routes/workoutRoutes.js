@@ -9,7 +9,8 @@ import {
   deleteSet,
   finishSession,
   getActiveSession,
-  getSessionById
+  getSessionById,
+  getTrainerAssignedMembers
 } from '../controllers/workoutController.js';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
 
@@ -18,7 +19,10 @@ const router = Router();
 // Todas las rutas de entrenamientos requieren autenticacion estricta con JWT
 router.use(verifyToken);
 
-// 1. Sesiones de entrenamiento
+// 1. Rutas de Entrenador (DEBEN IR ANTES de /:sessionId)
+router.get('/trainer/members', requireRole('trainer', 'admin'), getTrainerAssignedMembers);
+
+// 2. Sesiones de entrenamiento
 // - Obtener sesion activa en curso (si existe) para el usuario autenticado
 router.get('/sessions/active', requireRole('member', 'admin'), getActiveSession);
 

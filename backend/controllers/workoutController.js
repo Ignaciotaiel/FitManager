@@ -67,9 +67,55 @@ async function checkHasSessionStatus() {
 }
 
 /**
+ * Formatear segundos en HH:MM:SS
+ */
+function formatDuration(totalSeconds) {
+  if (totalSeconds === null || totalSeconds === undefined || isNaN(totalSeconds) || totalSeconds < 0) {
+    return null;
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+/**
+ * Calcular duración de una sesión:
+ * - Si tiene ended_at y created_at: diferencia real (fija).
+ * - Si está in_progress y tiene created_at: diferencia con respecto a la hora actual.
+ * - Si es histórica y ended_at es null (o created_at no existe): duration_seconds: null, duration_formatted: null.
+ */
+function calculateSessionDuration(session) {
+  const createdAt = session.created_at || session.session_date;
+  if (!createdAt) {
+    return { duration_seconds: null, duration_formatted: null };
+  }
+
+  const startMs = new Date(createdAt).getTime();
+  if (isNaN(startMs)) {
+    return { duration_seconds: null, duration_formatted: null };
+  }
+
+  if (session.ended_at) {
+    const endMs = new Date(session.ended_at).getTime();
+    if (!isNaN(endMs) && endMs >= startMs) {
+      const sec = Math.floor((endMs - startMs) / 1000);
+      return { duration_seconds: sec, duration_formatted: formatDuration(sec) };
+    }
+  } else if (session.status === 'in_progress') {
+    const nowMs = Date.now();
+    const sec = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+    return { duration_seconds: sec, duration_formatted: formatDuration(sec) };
+  }
+
+  return { duration_seconds: null, duration_formatted: null };
+}
+
+/**
  * Comprobar si un entrenador tiene permiso para ver el historial de un socio.
- * Un entrenador solo puede ver el progreso de un socio si tiene al menos una rutina asignada a él
- * (verificado en routine_assignments o en el campo legacy routines.member_id).
+ * Un entrenador solo puede ver el progreso de un socio si:
+ * 1. El socio tiene role = 'member' y está activo (is_active = 1).
+ * 2. Tiene al menos una rutina asignada a él (en routine_assignments o en routines.member_id).
  */
 async function canTrainerAccessMember(trainerId, memberId) {
   const hasAssignmentsTable = await checkHasAssignmentsTable();
@@ -77,14 +123,24 @@ async function canTrainerAccessMember(trainerId, memberId) {
     const [rows] = await pool.execute(
       `SELECT 1 FROM routines r
        LEFT JOIN routine_assignments ra ON r.id = ra.routine_id
-       WHERE r.trainer_id = ? AND (ra.member_id = ? OR r.member_id = ?)
+       INNER JOIN users u ON (ra.member_id = u.id OR r.member_id = u.id)
+       WHERE r.trainer_id = ? 
+         AND u.id = ? 
+         AND u.role = 'member' 
+         AND u.is_active = 1
        LIMIT 1`,
-      [trainerId, memberId, memberId]
+      [trainerId, memberId]
     );
     return rows.length > 0;
   } else {
     const [rows] = await pool.execute(
-      'SELECT 1 FROM routines WHERE trainer_id = ? AND member_id = ? LIMIT 1',
+      `SELECT 1 FROM routines r
+       INNER JOIN users u ON r.member_id = u.id
+       WHERE r.trainer_id = ? 
+         AND u.id = ? 
+         AND u.role = 'member' 
+         AND u.is_active = 1
+       LIMIT 1`,
       [trainerId, memberId]
     );
     return rows.length > 0;
@@ -382,6 +438,7 @@ export async function createSession(req, res, next) {
 // POST /api/workouts/sessions/:sessionId/sets
 // ==============================================================================
 export async function addSetToSession(req, res, next) {
+  let connection = null;
   try {
     const userId = req.user.id;
     const { sessionId } = req.params;
@@ -391,36 +448,6 @@ export async function addSetToSession(req, res, next) {
       return res.status(400).json({
         ok: false,
         error: { message: 'identificador de sesion invalido', code: 'INVALID_SESSION_ID' }
-      });
-    }
-
-    const hasStatus = await checkHasSessionStatus();
-    let sessionQuery = 'SELECT id, user_id';
-    if (hasStatus) sessionQuery += ', status';
-    sessionQuery += ' FROM workout_sessions WHERE id = ? LIMIT 1';
-
-    // Verificar que la sesion exista y pertenezca estrictamente al usuario
-    const [sessions] = await pool.execute(sessionQuery, [parsedSessionId]);
-
-    if (sessions.length === 0) {
-      return res.status(404).json({
-        ok: false,
-        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
-      });
-    }
-
-    if (Number(sessions[0].user_id) !== Number(userId)) {
-      return res.status(403).json({
-        ok: false,
-        error: { message: 'no tienes permiso para agregar series a esta sesion', code: 'FORBIDDEN' }
-      });
-    }
-
-    // Impedir agregar series si la sesion ya fue finalizada
-    if (hasStatus && sessions[0].status === 'completed') {
-      return res.status(400).json({
-        ok: false,
-        error: { message: 'la sesion ya ha sido finalizada y no puede recibir nuevas series', code: 'SESSION_COMPLETED' }
       });
     }
 
@@ -434,7 +461,7 @@ export async function addSetToSession(req, res, next) {
       });
     }
 
-    // Comprobar existencia del ejercicio
+    // Comprobar existencia del ejercicio antes de abrir la transacción
     const [exRows] = await pool.execute('SELECT id FROM exercises WHERE id = ? LIMIT 1', [parsedExId]);
     if (exRows.length === 0) {
       return res.status(404).json({
@@ -465,9 +492,45 @@ export async function addSetToSession(req, res, next) {
       });
     }
 
-    // Si no envio set_number, autocalcular la siguiente serie para este ejercicio en la sesion
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const hasStatus = await checkHasSessionStatus();
+    let sessionQuery = 'SELECT id, user_id';
+    if (hasStatus) sessionQuery += ', status';
+    sessionQuery += ' FROM workout_sessions WHERE id = ? FOR UPDATE';
+
+    // Bloqueo coordinado FOR UPDATE sobre la sesión de entrenamiento
+    const [sessions] = await connection.execute(sessionQuery, [parsedSessionId]);
+
+    if (sessions.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+      });
+    }
+
+    if (Number(sessions[0].user_id) !== Number(userId)) {
+      await connection.rollback();
+      return res.status(403).json({
+        ok: false,
+        error: { message: 'no tienes permiso para agregar series a esta sesion', code: 'FORBIDDEN' }
+      });
+    }
+
+    // Impedir agregar series si la sesion ya fue finalizada
+    if (hasStatus && sessions[0].status === 'completed') {
+      await connection.rollback();
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'la sesion ya ha sido finalizada y no puede recibir nuevas series', code: 'SESSION_COMPLETED' }
+      });
+    }
+
+    // Si no envio set_number, autocalcular la siguiente serie para este ejercicio en la sesion dentro del lock
     if (!parsedSetNumber) {
-      const [maxSetRows] = await pool.execute(
+      const [maxSetRows] = await connection.execute(
         'SELECT COALESCE(MAX(set_number), 0) AS max_set FROM workout_set_logs WHERE session_id = ? AND exercise_id = ?',
         [parsedSessionId, parsedExId]
       );
@@ -477,12 +540,14 @@ export async function addSetToSession(req, res, next) {
     const parsedRoutineExId = routine_exercise_id ? Number(routine_exercise_id) : null;
     const parsedRpe = rpe !== undefined && rpe !== null ? Number(rpe) : null;
 
-    const [insertRes] = await pool.execute(
+    const [insertRes] = await connection.execute(
       `INSERT INTO workout_set_logs 
         (session_id, user_id, exercise_id, routine_exercise_id, set_number, weight_kg, reps_completed, rpe)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [parsedSessionId, userId, parsedExId, parsedRoutineExId, parsedSetNumber, Number(weight_kg), Number(reps_completed), parsedRpe]
     );
+
+    await connection.commit();
 
     return res.status(201).json({
       ok: true,
@@ -502,7 +567,10 @@ export async function addSetToSession(req, res, next) {
       }
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     next(error);
+  } finally {
+    if (connection) connection.release();
   }
 }
 
@@ -627,10 +695,15 @@ export async function getWorkoutHistory(req, res, next) {
       setsBySession[s.session_id].push(s);
     }
 
-    const formattedSessions = sessions.map(s => ({
-      ...s,
-      sets: setsBySession[s.id] || []
-    }));
+    const formattedSessions = sessions.map(s => {
+      const dur = calculateSessionDuration(s);
+      return {
+        ...s,
+        duration_seconds: dur.duration_seconds,
+        duration_formatted: dur.duration_formatted,
+        sets: setsBySession[s.id] || []
+      };
+    });
 
     return res.status(200).json({
       ok: true,
@@ -741,11 +814,15 @@ export async function getSessionById(req, res, next) {
       [parsedSessionId]
     );
 
+    const dur = calculateSessionDuration(session);
+
     return res.status(200).json({
       ok: true,
       data: {
         session: {
           ...session,
+          duration_seconds: dur.duration_seconds,
+          duration_formatted: dur.duration_formatted,
           sets: sets || []
         }
       }
@@ -907,6 +984,7 @@ export async function getExerciseHistory(req, res, next) {
 // Solo el socio dueño del registro puede corregir sus kilos o repeticiones
 // ==============================================================================
 export async function updateSet(req, res, next) {
+  let connection = null;
   try {
     const userId = req.user.id;
     const { id } = req.params;
@@ -919,12 +997,40 @@ export async function updateSet(req, res, next) {
       });
     }
 
-    const [existing] = await pool.execute(
-      'SELECT id, user_id, weight_kg, reps_completed, rpe, set_number FROM workout_set_logs WHERE id = ? LIMIT 1',
+    const { weight_kg, reps_completed, rpe, set_number } = req.body;
+
+    if (weight_kg !== undefined && !isValidWeight(weight_kg)) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'peso invalido', code: 'INVALID_WEIGHT' }
+      });
+    }
+
+    if (reps_completed !== undefined && !isValidReps(reps_completed)) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'repeticiones invalidas', code: 'INVALID_REPS' }
+      });
+    }
+
+    if (set_number !== undefined && !isValidSetNumber(set_number)) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'numero de serie invalido', code: 'INVALID_SET_NUMBER' }
+      });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Bloqueo FOR UPDATE de la serie
+    const [existing] = await connection.execute(
+      'SELECT id, session_id, user_id, weight_kg, reps_completed, rpe, set_number FROM workout_set_logs WHERE id = ? FOR UPDATE',
       [setId]
     );
 
     if (existing.length === 0) {
+      await connection.rollback();
       return res.status(404).json({
         ok: false,
         error: { message: 'la serie no existe', code: 'SET_NOT_FOUND' }
@@ -933,18 +1039,20 @@ export async function updateSet(req, res, next) {
 
     // Seguridad estricta: solo el creador puede modificar sus marcas
     if (Number(existing[0].user_id) !== Number(userId)) {
+      await connection.rollback();
       return res.status(403).json({
         ok: false,
         error: { message: 'no tienes permiso para modificar series de otro usuario', code: 'FORBIDDEN' }
       });
     }
 
-    // Impedir editar series si la sesion ya fue finalizada
-    const [parentSession] = await pool.execute(
-      'SELECT s.status FROM workout_sessions s INNER JOIN workout_set_logs l ON l.session_id = s.id WHERE l.id = ? LIMIT 1',
-      [setId]
+    // Bloqueo coordinado FOR UPDATE de la sesión padre
+    const [parentSession] = await connection.execute(
+      'SELECT id, status FROM workout_sessions WHERE id = ? FOR UPDATE',
+      [existing[0].session_id]
     );
     if (parentSession.length > 0 && parentSession[0].status === 'completed') {
+      await connection.rollback();
       return res.status(400).json({
         ok: false,
         error: { message: 'no se pueden modificar series de una sesion finalizada', code: 'SESSION_COMPLETED' }
@@ -952,47 +1060,17 @@ export async function updateSet(req, res, next) {
     }
 
     const current = existing[0];
-    const { weight_kg, reps_completed, rpe, set_number } = req.body;
-
-    let newWeight = current.weight_kg;
-    if (weight_kg !== undefined) {
-      if (!isValidWeight(weight_kg)) {
-        return res.status(400).json({
-          ok: false,
-          error: { message: 'peso invalido', code: 'INVALID_WEIGHT' }
-        });
-      }
-      newWeight = Number(weight_kg);
-    }
-
-    let newReps = current.reps_completed;
-    if (reps_completed !== undefined) {
-      if (!isValidReps(reps_completed)) {
-        return res.status(400).json({
-          ok: false,
-          error: { message: 'repeticiones invalidas', code: 'INVALID_REPS' }
-        });
-      }
-      newReps = Number(reps_completed);
-    }
-
-    let newSetNum = current.set_number;
-    if (set_number !== undefined) {
-      if (!isValidSetNumber(set_number)) {
-        return res.status(400).json({
-          ok: false,
-          error: { message: 'numero de serie invalido', code: 'INVALID_SET_NUMBER' }
-        });
-      }
-      newSetNum = Number(set_number);
-    }
-
+    const newWeight = weight_kg !== undefined ? Number(weight_kg) : current.weight_kg;
+    const newReps = reps_completed !== undefined ? Number(reps_completed) : current.reps_completed;
+    const newSetNum = set_number !== undefined ? Number(set_number) : current.set_number;
     const newRpe = rpe !== undefined ? (rpe !== null ? Number(rpe) : null) : current.rpe;
 
-    await pool.execute(
+    await connection.execute(
       'UPDATE workout_set_logs SET weight_kg = ?, reps_completed = ?, set_number = ?, rpe = ? WHERE id = ?',
       [newWeight, newReps, newSetNum, newRpe, setId]
     );
+
+    await connection.commit();
 
     return res.status(200).json({
       ok: true,
@@ -1008,7 +1086,10 @@ export async function updateSet(req, res, next) {
       }
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     next(error);
+  } finally {
+    if (connection) connection.release();
   }
 }
 
@@ -1018,6 +1099,7 @@ export async function updateSet(req, res, next) {
 // Solo el socio dueño del registro puede eliminarlo
 // ==============================================================================
 export async function deleteSet(req, res, next) {
+  let connection = null;
   try {
     const userId = req.user.id;
     const { id } = req.params;
@@ -1030,19 +1112,27 @@ export async function deleteSet(req, res, next) {
       });
     }
 
-    const [existing] = await pool.execute(
-      'SELECT id, user_id FROM workout_set_logs WHERE id = ? LIMIT 1',
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Bloqueo de fila exclusivo FOR UPDATE para evitar colisiones en borrados concurrentes
+    const [existing] = await connection.execute(
+      'SELECT id, user_id, session_id, exercise_id FROM workout_set_logs WHERE id = ? FOR UPDATE',
       [setId]
     );
 
     if (existing.length === 0) {
+      await connection.rollback();
       return res.status(404).json({
         ok: false,
         error: { message: 'la serie no existe', code: 'SET_NOT_FOUND' }
       });
     }
 
+    const { session_id, exercise_id } = existing[0];
+
     if (Number(existing[0].user_id) !== Number(userId)) {
+      await connection.rollback();
       return res.status(403).json({
         ok: false,
         error: { message: 'no tienes permiso para eliminar series de otro usuario', code: 'FORBIDDEN' }
@@ -1050,18 +1140,38 @@ export async function deleteSet(req, res, next) {
     }
 
     // Impedir eliminar series si la sesion ya fue finalizada
-    const [parentSession] = await pool.execute(
+    const [parentSession] = await connection.execute(
       'SELECT s.status FROM workout_sessions s INNER JOIN workout_set_logs l ON l.session_id = s.id WHERE l.id = ? LIMIT 1',
       [setId]
     );
     if (parentSession.length > 0 && parentSession[0].status === 'completed') {
+      await connection.rollback();
       return res.status(400).json({
         ok: false,
         error: { message: 'no se pueden eliminar series de una sesion finalizada', code: 'SESSION_COMPLETED' }
       });
     }
 
-    await pool.execute('DELETE FROM workout_set_logs WHERE id = ?', [setId]);
+    // Eliminación atómica dentro de la transacción
+    await connection.execute('DELETE FROM workout_set_logs WHERE id = ?', [setId]);
+
+    // Renumerar atómicamente las series restantes del mismo ejercicio en esta sesión
+    if (session_id && exercise_id) {
+      const [remainingSets] = await connection.execute(
+        'SELECT id FROM workout_set_logs WHERE session_id = ? AND exercise_id = ? ORDER BY set_number ASC, created_at ASC, id ASC FOR UPDATE',
+        [session_id, exercise_id]
+      );
+
+      for (let i = 0; i < remainingSets.length; i++) {
+        const nextSetNum = i + 1;
+        await connection.execute(
+          'UPDATE workout_set_logs SET set_number = ? WHERE id = ?',
+          [nextSetNum, remainingSets[i].id]
+        );
+      }
+    }
+
+    await connection.commit();
 
     return res.status(200).json({
       ok: true,
@@ -1069,7 +1179,10 @@ export async function deleteSet(req, res, next) {
       data: { id: setId }
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     next(error);
+  } finally {
+    if (connection) connection.release();
   }
 }
 
@@ -1078,6 +1191,7 @@ export async function deleteSet(req, res, next) {
 // PATCH /api/workouts/sessions/:sessionId/finish
 // ==============================================================================
 export async function finishSession(req, res, next) {
+  let connection = null;
   try {
     const userId = req.user.id;
     const { sessionId } = req.params;
@@ -1090,12 +1204,17 @@ export async function finishSession(req, res, next) {
       });
     }
 
-    const [sessions] = await pool.execute(
-      'SELECT id, user_id, status FROM workout_sessions WHERE id = ? LIMIT 1',
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // Bloqueo coordinado FOR UPDATE sobre la sesión de entrenamiento
+    const [sessions] = await connection.execute(
+      'SELECT id, user_id, status FROM workout_sessions WHERE id = ? FOR UPDATE',
       [parsedSessionId]
     );
 
     if (sessions.length === 0) {
+      await connection.rollback();
       return res.status(404).json({
         ok: false,
         error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
@@ -1103,6 +1222,7 @@ export async function finishSession(req, res, next) {
     }
 
     if (Number(sessions[0].user_id) !== Number(userId)) {
+      await connection.rollback();
       return res.status(403).json({
         ok: false,
         error: { message: 'no tienes permiso para finalizar esta sesion', code: 'FORBIDDEN' }
@@ -1112,6 +1232,7 @@ export async function finishSession(req, res, next) {
     const hasStatus = await checkHasSessionStatus();
     if (hasStatus) {
       if (sessions[0].status === 'completed') {
+        await connection.commit();
         return res.status(200).json({
           ok: true,
           message: 'la sesion ya se encontraba finalizada',
@@ -1119,26 +1240,37 @@ export async function finishSession(req, res, next) {
         });
       }
 
-      await pool.execute(
+      await connection.execute(
         "UPDATE workout_sessions SET status = 'completed', ended_at = NOW() WHERE id = ?",
         [parsedSessionId]
       );
     }
 
-    const [updated] = await pool.execute(
+    const [updated] = await connection.execute(
       'SELECT id, user_id, routine_id, session_date, status, ended_at, notes FROM workout_sessions WHERE id = ? LIMIT 1',
       [parsedSessionId]
     );
+
+    await connection.commit();
+
+    const dur = calculateSessionDuration(updated[0] || { id: parsedSessionId, status: 'completed' });
 
     return res.status(200).json({
       ok: true,
       message: 'sesion de entrenamiento finalizada con exito',
       data: {
-        session: updated[0] || { id: parsedSessionId, status: 'completed' }
+        session: {
+          ...(updated[0] || { id: parsedSessionId, status: 'completed' }),
+          duration_seconds: dur.duration_seconds,
+          duration_formatted: dur.duration_formatted
+        }
       }
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     next(error);
+  } finally {
+    if (connection) connection.release();
   }
 }
 
@@ -1205,6 +1337,7 @@ export async function getActiveSession(req, res, next) {
     }
 
     const activeSession = sessions[0];
+    const dur = calculateSessionDuration(activeSession);
 
     // Traer las series registradas en esta sesion activa
     const [sets] = await pool.execute(
@@ -1232,8 +1365,70 @@ export async function getActiveSession(req, res, next) {
       data: {
         active_session: {
           ...activeSession,
+          duration_seconds: dur.duration_seconds,
+          duration_formatted: dur.duration_formatted,
           sets: sets || []
         }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// ==============================================================================
+// 10. OBTENER LISTA DE ALUMNOS ASIGNADOS A UN ENTRENADOR
+// GET /api/workouts/trainer/members
+// ==============================================================================
+export async function getTrainerAssignedMembers(req, res, next) {
+  try {
+    const trainerId = req.user.id;
+    const hasAssignmentsTable = await checkHasAssignmentsTable();
+
+    let query;
+    let params;
+
+    if (hasAssignmentsTable) {
+      query = `
+        SELECT DISTINCT 
+          u.id, 
+          u.name, 
+          u.email, 
+          u.is_active
+        FROM users u
+        INNER JOIN (
+          SELECT ra.member_id 
+          FROM routine_assignments ra
+          INNER JOIN routines r ON ra.routine_id = r.id
+          WHERE r.trainer_id = ?
+          UNION
+          SELECT r2.member_id
+          FROM routines r2
+          WHERE r2.trainer_id = ? AND r2.member_id IS NOT NULL
+        ) assigned ON u.id = assigned.member_id
+        WHERE u.role = 'member' AND u.is_active = 1
+        ORDER BY u.name ASC`;
+      params = [trainerId, trainerId];
+    } else {
+      query = `
+        SELECT DISTINCT 
+          u.id, 
+          u.name, 
+          u.email, 
+          u.is_active
+        FROM users u
+        INNER JOIN routines r ON u.id = r.member_id
+        WHERE r.trainer_id = ? AND u.role = 'member' AND u.is_active = 1
+        ORDER BY u.name ASC`;
+      params = [trainerId];
+    }
+
+    const [members] = await pool.execute(query, params);
+
+    return res.status(200).json({
+      ok: true,
+      data: {
+        members: members || []
       }
     });
   } catch (error) {

@@ -447,6 +447,14 @@ export function TrainerDashboardScreen({ navigation }) {
           />
         </View>
 
+        <View style={{ marginBottom: 12 }}>
+          <Button
+            title="👥 HISTORIAL DE ALUMNOS Y PROGRESO"
+            variant="secondary"
+            onPress={() => navigation.navigate('TrainerStudentsHistory')}
+          />
+        </View>
+
         <View style={styles.sectionTitleRow}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
             PLANES DE ENTRENAMIENTO DIAGRAMADOS
