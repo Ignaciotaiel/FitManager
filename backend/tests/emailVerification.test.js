@@ -860,6 +860,8 @@ describe('Pruebas Exhaustivas: Verificación de Correo Electrónico en Registro'
     const mockTransportSendError = async () => {
       const smtpAuthError = new Error('Invalid login: 535-5.7.8 Username and Password not accepted');
       smtpAuthError.code = 'EAUTH';
+      smtpAuthError.responseCode = 535;
+      smtpAuthError.command = 'AUTH PLAIN';
       throw smtpAuthError;
     };
 
@@ -870,6 +872,8 @@ describe('Pruebas Exhaustivas: Verificación de Correo Electrónico en Registro'
       } catch (err) {
         const safeError = new Error('no fue posible enviar el correo electronico a traves de Gmail SMTP');
         safeError.code = err.code || 'EMAIL_SEND_FAILED';
+        safeError.smtpCode = err.responseCode || null;
+        safeError.smtpCommand = err.command || null;
         throw safeError;
       }
     } catch (e) {
@@ -878,6 +882,8 @@ describe('Pruebas Exhaustivas: Verificación de Correo Electrónico en Registro'
 
     assert.ok(caughtError);
     assert.equal(caughtError.code, 'EAUTH');
+    assert.equal(caughtError.smtpCode, 535);
+    assert.equal(caughtError.smtpCommand, 'AUTH PLAIN');
     assert.equal(caughtError.message, 'no fue posible enviar el correo electronico a traves de Gmail SMTP');
     assert.equal(caughtError.message.includes('Password'), false, 'El mensaje seguro no debe contener detalles sensibles de contraseña');
   });

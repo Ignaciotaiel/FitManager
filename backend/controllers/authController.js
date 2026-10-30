@@ -181,7 +181,12 @@ export async function register(req, res, next) {
     // Enviar el correo con el código de verificación en segundo plano
     // No bloquea la respuesta ni expone el código en el payload
     sendVerificationCodeEmail(cleanEmail, name.trim(), code).catch(err => {
-      console.error('[emailService] Error al enviar código de verificación en registro:', err.message);
+      const details = [
+        err.code ? `code=${err.code}` : null,
+        err.smtpCode ? `responseCode=${err.smtpCode}` : null,
+        err.smtpCommand ? `command=${err.smtpCommand}` : null
+      ].filter(Boolean).join(' ');
+      console.error(`[emailService] Error al enviar código de verificación en registro: ${err.message}${details ? ` (${details})` : ''}`);
     });
 
     // Se responde informando que se requiere verificar, SIN entregar JWT
@@ -585,9 +590,14 @@ export async function resendVerificationCode(req, res, next) {
 
     await connection.commit();
 
-    // 5. Enviar el nuevo código por correo mediante Resend
+    // 5. Enviar el nuevo código por correo mediante Gmail SMTP
     sendVerificationCodeEmail(user.email, user.name, code).catch(err => {
-      console.error('[emailService] Error al reenviar código de verificación:', err.message);
+      const details = [
+        err.code ? `code=${err.code}` : null,
+        err.smtpCode ? `responseCode=${err.smtpCode}` : null,
+        err.smtpCommand ? `command=${err.smtpCommand}` : null
+      ].filter(Boolean).join(' ');
+      console.error(`[emailService] Error al reenviar código de verificación: ${err.message}${details ? ` (${details})` : ''}`);
     });
 
     return res.status(200).json({

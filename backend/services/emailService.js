@@ -115,6 +115,8 @@ export async function sendEmail({ to, subject, html, text, from }) {
     // Manejo seguro de errores sin exponer contrasenas ni secretos de configuracion
     const safeError = new Error('no fue posible enviar el correo electronico a traves de Gmail SMTP');
     safeError.code = err.code || 'EMAIL_SEND_FAILED';
+    safeError.smtpCode = err.responseCode || null;
+    safeError.smtpCommand = err.command || null;
     throw safeError;
   }
 }
