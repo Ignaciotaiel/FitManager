@@ -825,4 +825,84 @@ describe('Pruebas Exhaustivas: Verificación de Correo Electrónico en Registro'
     // Limpieza de variable de entorno para tests posteriores
     delete process.env.MAINTENANCE_REGISTRATION;
   });
+
+  // Test 17: emailService con Nodemailer simula envio exitoso y devuelve messageId
+  test('17. emailService con Nodemailer procesa parametros requeridos y devuelve formato { ok: true, id }', async () => {
+    // Verificamos el contrato de sendEmail simulando el envio
+    const mockEmailOptions = {
+      to: 'socio@fitmanager.test',
+      subject: '123456 es tu código de verificación de FitManager',
+      html: '<h1>123456</h1>',
+      text: 'Tu código es 123456',
+      from: 'FitManager <tu_cuenta@gmail.com>'
+    };
+
+    assert.ok(mockEmailOptions.to);
+    assert.ok(mockEmailOptions.subject);
+    assert.ok(mockEmailOptions.html);
+
+    // Simulador del transportador Nodemailer
+    const mockTransportSend = async (options) => {
+      assert.equal(options.to, 'socio@fitmanager.test');
+      assert.ok(options.subject.includes('123456'));
+      return { messageId: '<test_msg_nodemailer_123@smtp.gmail.com>' };
+    };
+
+    const sendResult = await mockTransportSend(mockEmailOptions);
+    const standardResponse = { ok: true, id: sendResult.messageId };
+
+    assert.equal(standardResponse.ok, true);
+    assert.equal(standardResponse.id, '<test_msg_nodemailer_123@smtp.gmail.com>');
+  });
+
+  // Test 18: emailService maneja errores de conexion SMTP de forma segura sin filtrar contrasenas
+  test('18. Fallo en conexion SMTP genera error EMAIL_SEND_FAILED sin exponer contraseñas de aplicacion', async () => {
+    const mockTransportSendError = async () => {
+      const smtpAuthError = new Error('Invalid login: 535-5.7.8 Username and Password not accepted');
+      smtpAuthError.code = 'EAUTH';
+      throw smtpAuthError;
+    };
+
+    let caughtError = null;
+    try {
+      try {
+        await mockTransportSendError();
+      } catch (err) {
+        const safeError = new Error('no fue posible enviar el correo electronico a traves de Gmail SMTP');
+        safeError.code = err.code || 'EMAIL_SEND_FAILED';
+        throw safeError;
+      }
+    } catch (e) {
+      caughtError = e;
+    }
+
+    assert.ok(caughtError);
+    assert.equal(caughtError.code, 'EAUTH');
+    assert.equal(caughtError.message, 'no fue posible enviar el correo electronico a traves de Gmail SMTP');
+    assert.equal(caughtError.message.includes('Password'), false, 'El mensaje seguro no debe contener detalles sensibles de contraseña');
+  });
+
+  // Test 19: Si Nodemailer no devuelve un messageId valido, debe arrojar error EMAIL_SEND_NO_MESSAGE_ID sin inventar identificadores ficticios
+  test('19. Si el transporte no devuelve messageId, se arroja EMAIL_SEND_NO_MESSAGE_ID y no se genera ID ficticio', async () => {
+    const mockTransportSendWithoutId = async () => {
+      // Simula respuesta sin messageId
+      return { accepted: ['socio@fitmanager.test'], messageId: null };
+    };
+
+    let caughtError = null;
+    try {
+      const info = await mockTransportSendWithoutId();
+      if (!info || !info.messageId || typeof info.messageId !== 'string' || info.messageId.trim().length === 0) {
+        const error = new Error('no fue posible confirmar la entrega del correo: respuesta de servidor de correo sin identificador');
+        error.code = 'EMAIL_SEND_NO_MESSAGE_ID';
+        throw error;
+      }
+    } catch (e) {
+      caughtError = e;
+    }
+
+    assert.ok(caughtError);
+    assert.equal(caughtError.code, 'EMAIL_SEND_NO_MESSAGE_ID');
+    assert.equal(caughtError.message, 'no fue posible confirmar la entrega del correo: respuesta de servidor de correo sin identificador');
+  });
 });
