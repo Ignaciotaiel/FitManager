@@ -57,9 +57,14 @@ export function RegisterScreen({ navigation }) {
         data.password
       );
 
-      if (response?.ok && response?.data?.token) {
+      if (response?.ok && response?.data?.requires_verification) {
+        setSuccessMessage('¡Cuenta creada! Te enviamos un código de verificación a tu correo.');
+        setTimeout(() => {
+          navigation.navigate('EmailVerification', { email: data.email.trim() });
+        }, 800);
+      } else if (response?.ok && response?.data?.token) {
+        // Fallback por si en algún entorno devolviese token directo
         setSuccessMessage('cuenta creada exitosamente. ingresando...');
-        // el backend devuelve el token del usuario con rol 'member' asignado por defecto
         setTimeout(async () => {
           await login(response.data.token, response.data.user);
         }, 800);

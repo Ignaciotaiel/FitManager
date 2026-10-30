@@ -65,7 +65,14 @@ export function LoginScreen({ navigation }) {
       if (error.status === 401) {
         setErrorMessage('correo o contrasena incorrectos');
       } else if (error.status === 403) {
-        setErrorMessage('tu cuenta se encuentra desactivada. contacta al administrador');
+        if (error.code === 'EMAIL_NOT_VERIFIED') {
+          setErrorMessage('Debes verificar tu correo antes de ingresar. Redirigiendo a verificación...');
+          setTimeout(() => {
+            navigation.navigate('EmailVerification', { email: data.email.trim() });
+          }, 1200);
+        } else {
+          setErrorMessage('tu cuenta se encuentra desactivada. contacta al administrador');
+        }
       } else if (error.status === 400 && error.code === 'SOCIAL_ACCOUNT_ONLY') {
         setErrorMessage('esta cuenta fue creada mediante inicio social, ingresa con tu proveedor');
       } else if (error.code === 'TIMEOUT_ERROR') {

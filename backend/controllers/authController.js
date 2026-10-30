@@ -1,10 +1,79 @@
+import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 import { isValidEmail, isValidPassword, isValidRole } from '../middlewares/validate.js';
+import { sendEmail } from '../services/emailService.js';
 
 // duracion del salt para hash con bcrypt
 const SALT_ROUNDS = 10;
+const CODE_EXPIRATION_MINUTES = 10;
+const MAX_VERIFICATION_ATTEMPTS = 5;
+const RESEND_COOLDOWN_SECONDS = 60; // Protección contra spam de reenvío
+
+// funcion auxiliar para hashear codigos de verificación (SHA-256)
+function hashVerificationCode(code) {
+  return crypto.createHash('sha256').update(String(code).trim()).digest('hex');
+}
+
+// funcion auxiliar para generar un codigo aleatorio criptografico de 6 digitos
+function generate6DigitCode() {
+  const randomNum = crypto.randomInt(100000, 1000000);
+  return String(randomNum);
+}
+
+// funcion auxiliar para enviar el correo con el codigo de verificacion
+async function sendVerificationCodeEmail(email, name, code) {
+  const subject = `${code} es tu código de verificación de FitManager`;
+  const html = `
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; margin: 0; padding: 20px; }
+        .container { max-width: 500px; margin: 0 auto; background-color: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 32px; }
+        .header { text-align: center; margin-bottom: 24px; }
+        .title { font-size: 24px; font-weight: bold; color: #ffffff; letter-spacing: 0.5px; margin: 0; }
+        .subtitle { font-size: 14px; color: #9ca3af; margin-top: 8px; }
+        .code-box { background: linear-gradient(135deg, #1e1e2d 0%, #171b26 100%); border: 1px solid #3b82f6; border-radius: 8px; padding: 20px; text-align: center; margin: 28px 0; }
+        .code { font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #60a5fa; margin: 0; font-family: 'Courier New', Courier, monospace; }
+        .info { font-size: 14px; color: #9ca3af; line-height: 1.6; }
+        .footer { margin-top: 32px; border-top: 1px solid #1f2937; padding-top: 16px; font-size: 12px; color: #6b7280; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 class="title">FitManager</h1>
+          <p class="subtitle">Verificación de correo electrónico</p>
+        </div>
+        <p class="info">Hola <strong>${name}</strong>,</p>
+        <p class="info">Gracias por registrarte. Ingresá el siguiente código de 6 dígitos en la aplicación para activar tu cuenta:</p>
+        <div class="code-box">
+          <div class="code">${code}</div>
+        </div>
+        <p class="info" style="font-size: 13px;">
+          • El código vence en <strong>10 minutos</strong>.<br>
+          • Tenés un máximo de 5 intentos.<br>
+          • Si no solicitaste esta cuenta, podés desestimar este mensaje de forma segura.
+        </p>
+        <div class="footer">
+          FitManager &bull; Sistema de Gestión y Entrenamiento
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+  const text = `Hola ${name},\n\nTu código de verificación para FitManager es: ${code}\n\nEste código vence en 10 minutos. Tenés un máximo de 5 intentos.\n\nSi no creaste esta cuenta, ignorá este mensaje.`;
+
+  return sendEmail({
+    to: email,
+    subject,
+    html,
+    text
+  });
+}
 
 // funcion auxiliar para generar token jwt
 function generateToken(user) {
@@ -24,8 +93,22 @@ function generateToken(user) {
 
 // registro de usuario local (con contrasena protegida por bcrypt)
 // REGLA DE SEGURIDAD: Todo registro público crea estrictamente usuarios con rol 'member'
+// REGLA DE VERIFICACION: La cuenta se crea pendiente de verificacion (email_verified_at = NULL).
+// NO se entrega JWT de sesion hasta que verifique su correo.
 export async function register(req, res, next) {
+  let connection;
   try {
+    // Control de Mantenimiento de Registros: Permite pausar altas durante migraciones
+    if (process.env.MAINTENANCE_REGISTRATION === 'true') {
+      return res.status(503).json({
+        ok: false,
+        error: {
+          message: 'el registro de nuevos usuarios se encuentra temporalmente en mantenimiento. por favor intenta en unos minutos',
+          code: 'REGISTRATION_TEMPORARILY_DISABLED'
+        }
+      });
+    }
+
     const { name, email, password } = req.body;
 
     // validaciones obligatorias
@@ -52,16 +135,19 @@ export async function register(req, res, next) {
 
     // Seguridad: Se ignora cualquier campo role del cliente; siempre es 'member'
     const finalRole = 'member';
-
     const cleanEmail = email.trim().toLowerCase();
 
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     // comprobar si el correo ya esta registrado (consulta parametrizada)
-    const [existing] = await pool.execute(
+    const [existing] = await connection.execute(
       'SELECT id FROM users WHERE email = ? LIMIT 1',
       [cleanEmail]
     );
 
     if (existing.length > 0) {
+      await connection.rollback();
       return res.status(409).json({
         ok: false,
         error: { message: 'el correo electronico ya esta registrado', code: 'EMAIL_ALREADY_EXISTS' }
@@ -71,33 +157,60 @@ export async function register(req, res, next) {
     // hash seguro de contrasena con bcrypt
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-    // insercion parametrizada
-    const [result] = await pool.execute(
-      'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, ?, 1)',
+    // insercion parametrizada de usuario (email_verified_at inicia en NULL)
+    const [result] = await connection.execute(
+      'INSERT INTO users (name, email, password_hash, role, is_active, email_verified_at) VALUES (?, ?, ?, ?, 1, NULL)',
       [name.trim(), cleanEmail, passwordHash, finalRole]
     );
 
-    const newUser = {
-      id: result.insertId,
-      name: name.trim(),
-      email: cleanEmail,
-      role: finalRole,
-      is_active: 1
-    };
+    const newUserId = result.insertId;
 
-    const token = generateToken(newUser);
+    // Generar código de verificación criptográfico de 6 dígitos
+    const code = generate6DigitCode();
+    const codeHash = hashVerificationCode(code);
 
-    // respondemos sin exponer hashes ni contrasenas
+    // Guardar código en auth_codes con validez de 10 minutos
+    await connection.execute(
+      `INSERT INTO auth_codes (user_id, code_hash, type, attempts, expires_at, created_at)
+       VALUES (?, ?, 'email_verification', 0, DATE_ADD(NOW(), INTERVAL ? MINUTE), NOW())`,
+      [newUserId, codeHash, CODE_EXPIRATION_MINUTES]
+    );
+
+    await connection.commit();
+
+    // Enviar el correo con el código de verificación en segundo plano
+    // No bloquea la respuesta ni expone el código en el payload
+    sendVerificationCodeEmail(cleanEmail, name.trim(), code).catch(err => {
+      console.error('[emailService] Error al enviar código de verificación en registro:', err.message);
+    });
+
+    // Se responde informando que se requiere verificar, SIN entregar JWT
     return res.status(201).json({
       ok: true,
-      message: 'usuario registrado exitosamente',
+      message: 'cuenta creada exitosamente. enviamos un código de verificación a tu correo',
       data: {
-        token,
-        user: newUser
+        requires_verification: true,
+        email: cleanEmail,
+        user: {
+          id: newUserId,
+          name: name.trim(),
+          email: cleanEmail,
+          role: finalRole,
+          is_active: 1
+        }
       }
     });
   } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
     next(error);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 }
 
@@ -117,7 +230,7 @@ export async function login(req, res, next) {
 
     // buscar usuario activo (consulta parametrizada)
     const [rows] = await pool.execute(
-      'SELECT id, name, email, password_hash, role, is_active FROM users WHERE email = ? LIMIT 1',
+      'SELECT id, name, email, password_hash, role, is_active, email_verified_at FROM users WHERE email = ? LIMIT 1',
       [cleanEmail]
     );
 
@@ -158,6 +271,22 @@ export async function login(req, res, next) {
       });
     }
 
+    // REGLA DE SEGURIDAD: No permitir inicio de sesión local si el correo no fue verificado.
+    // Usuarios preexistentes tienen email_verified_at seteado por la migración 004, por lo que ingresan normalmente.
+    if (user.email_verified_at === null) {
+      return res.status(403).json({
+        ok: false,
+        error: {
+          message: 'debes verificar tu correo electronico antes de iniciar sesion',
+          code: 'EMAIL_NOT_VERIFIED'
+        },
+        data: {
+          requires_verification: true,
+          email: user.email
+        }
+      });
+    }
+
     const userPayload = {
       id: user.id,
       name: user.name,
@@ -178,6 +307,308 @@ export async function login(req, res, next) {
     });
   } catch (error) {
     next(error);
+  }
+}
+
+// verificar codigo de 6 digitos para confirmacion de correo
+export async function verifyEmail(req, res, next) {
+  let connection;
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'debes proporcionar un correo electronico valido', code: 'INVALID_EMAIL' }
+      });
+    }
+
+    if (!code || typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'el codigo debe ser de 6 digitos numericos', code: 'INVALID_CODE_FORMAT' }
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = code.trim();
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // 1. Obtener usuario
+    const [userRows] = await connection.execute(
+      'SELECT id, name, email, role, is_active, email_verified_at FROM users WHERE email = ? LIMIT 1 FOR UPDATE',
+      [cleanEmail]
+    );
+
+    if (userRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'usuario no encontrado', code: 'USER_NOT_FOUND' }
+      });
+    }
+
+    const user = userRows[0];
+
+    if (!user.is_active) {
+      await connection.rollback();
+      return res.status(403).json({
+        ok: false,
+        error: { message: 'la cuenta se encuentra desactivada', code: 'ACCOUNT_INACTIVE' }
+      });
+    }
+
+    // Si ya está verificado, retornar éxito directamente
+    if (user.email_verified_at !== null) {
+      await connection.rollback();
+      return res.status(200).json({
+        ok: true,
+        message: 'el correo ya se encuentra verificado',
+        data: {
+          already_verified: true,
+          email: user.email
+        }
+      });
+    }
+
+    // 2. Obtener el último código emitido para este usuario de tipo email_verification bloqueando la fila
+    const [codeRows] = await connection.execute(
+      `SELECT id, code_hash, attempts, expires_at, used_at, NOW() as current_db_time
+       FROM auth_codes
+       WHERE user_id = ? AND type = 'email_verification'
+       ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+      [user.id]
+    );
+
+    if (codeRows.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'no hay ningún código de verificación activo para este usuario', code: 'NO_CODE_FOUND' }
+      });
+    }
+
+    const activeCodeRow = codeRows[0];
+
+    // Comprobar si ya fue utilizado
+    if (activeCodeRow.used_at !== null) {
+      await connection.rollback();
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'este código ya ha sido utilizado. solicitá uno nuevo', code: 'CODE_ALREADY_USED' }
+      });
+    }
+
+    // Comprobar si ya alcanzó el límite estricto de intentos permitidos (máx 5)
+    if (activeCodeRow.attempts >= MAX_VERIFICATION_ATTEMPTS) {
+      await connection.execute(
+        'UPDATE auth_codes SET used_at = NOW() WHERE id = ?',
+        [activeCodeRow.id]
+      );
+      await connection.commit();
+      return res.status(400).json({
+        ok: false,
+        error: {
+          message: 'has superado el límite de 5 intentos permitidos. por favor solicitá un nuevo código',
+          code: 'MAX_ATTEMPTS_EXCEEDED'
+        }
+      });
+    }
+
+    // Comprobar expiración (10 minutos)
+    const expiresAt = new Date(activeCodeRow.expires_at).getTime();
+    const currentDbTime = new Date(activeCodeRow.current_db_time || Date.now()).getTime();
+
+    if (currentDbTime > expiresAt) {
+      // Invalida el código vencido
+      await connection.execute(
+        'UPDATE auth_codes SET used_at = NOW() WHERE id = ?',
+        [activeCodeRow.id]
+      );
+      await connection.commit();
+      return res.status(400).json({
+        ok: false,
+        error: {
+          message: 'el código ha expirado (validez de 10 minutos). solicitá un nuevo código',
+          code: 'CODE_EXPIRED'
+        }
+      });
+    }
+
+    // Comparar hash del código proporcionado
+    const inputHash = hashVerificationCode(cleanCode);
+    if (inputHash !== activeCodeRow.code_hash) {
+      const newAttempts = activeCodeRow.attempts + 1;
+      await connection.execute(
+        'UPDATE auth_codes SET attempts = ? WHERE id = ?',
+        [newAttempts, activeCodeRow.id]
+      );
+      await connection.commit();
+
+      const remainingAttempts = Math.max(0, MAX_VERIFICATION_ATTEMPTS - newAttempts);
+      return res.status(400).json({
+        ok: false,
+        error: {
+          message: `código incorrecto. te quedan ${remainingAttempts} intento(s)`,
+          code: 'INVALID_CODE',
+          remaining_attempts: remainingAttempts
+        }
+      });
+    }
+
+    // Código válido: marcar código como utilizado y marcar usuario como verificado
+    await connection.execute(
+      'UPDATE auth_codes SET used_at = NOW() WHERE id = ?',
+      [activeCodeRow.id]
+    );
+
+    await connection.execute(
+      'UPDATE users SET email_verified_at = NOW() WHERE id = ?',
+      [user.id]
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      ok: true,
+      message: 'correo electronico verificado exitosamente. ya podes iniciar sesion',
+      data: {
+        verified: true,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
+    next(error);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+}
+
+// reenviar codigo de verificacion de 6 digitos
+export async function resendVerificationCode(req, res, next) {
+  let connection;
+  try {
+    const { email } = req.body;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'debes proporcionar un correo electronico valido', code: 'INVALID_EMAIL' }
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // 1. Obtener usuario
+    const [userRows] = await connection.execute(
+      'SELECT id, name, email, role, is_active, email_verified_at FROM users WHERE email = ? LIMIT 1 FOR UPDATE',
+      [cleanEmail]
+    );
+
+    if (userRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'usuario no encontrado', code: 'USER_NOT_FOUND' }
+      });
+    }
+
+    const user = userRows[0];
+
+    if (!user.is_active) {
+      await connection.rollback();
+      return res.status(403).json({
+        ok: false,
+        error: { message: 'la cuenta se encuentra desactivada', code: 'ACCOUNT_INACTIVE' }
+      });
+    }
+
+    if (user.email_verified_at !== null) {
+      await connection.rollback();
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'esta cuenta ya tiene el correo verificado', code: 'ALREADY_VERIFIED' }
+      });
+    }
+
+    // 2. Control de límite de frecuencia (cooldown de 60 segundos entre reenvíos)
+    const [recentCodes] = await connection.execute(
+      `SELECT created_at, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS seconds_ago
+       FROM auth_codes
+       WHERE user_id = ? AND type = 'email_verification'
+       ORDER BY id DESC LIMIT 1`,
+      [user.id]
+    );
+
+    if (recentCodes.length > 0 && recentCodes[0].seconds_ago !== null && recentCodes[0].seconds_ago < RESEND_COOLDOWN_SECONDS) {
+      const waitSeconds = RESEND_COOLDOWN_SECONDS - recentCodes[0].seconds_ago;
+      await connection.rollback();
+      return res.status(429).json({
+        ok: false,
+        error: {
+          message: `por favor esperá ${waitSeconds} segundos antes de solicitar otro código`,
+          code: 'RATE_LIMIT_EXCEEDED',
+          retry_after_seconds: waitSeconds
+        }
+      });
+    }
+
+    // 3. Invalidar todos los códigos anteriores no utilizados
+    await connection.execute(
+      `UPDATE auth_codes
+       SET used_at = NOW()
+       WHERE user_id = ? AND type = 'email_verification' AND used_at IS NULL`,
+      [user.id]
+    );
+
+    // 4. Generar nuevo código de 6 dígitos
+    const code = generate6DigitCode();
+    const codeHash = hashVerificationCode(code);
+
+    await connection.execute(
+      `INSERT INTO auth_codes (user_id, code_hash, type, attempts, expires_at, created_at)
+       VALUES (?, ?, 'email_verification', 0, DATE_ADD(NOW(), INTERVAL ? MINUTE), NOW())`,
+      [user.id, codeHash, CODE_EXPIRATION_MINUTES]
+    );
+
+    await connection.commit();
+
+    // 5. Enviar el nuevo código por correo mediante Resend
+    sendVerificationCodeEmail(user.email, user.name, code).catch(err => {
+      console.error('[emailService] Error al reenviar código de verificación:', err.message);
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: 'un nuevo código de verificación ha sido enviado a tu correo',
+      data: {
+        sent: true,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
+    next(error);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 }
 
@@ -414,9 +845,10 @@ export async function verifyGoogleAuth(req, res, next) {
       } else {
         // 3. Crear nuevo usuario con rol estricto 'member' y password_hash = NULL
         const finalEmail = email || `google_${providerUserId}@fitmanager.social`;
+        const verifiedAtValue = emailVerified ? new Date() : null;
         const [insertUserRes] = await connection.execute(
-          'INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, NULL, ?, 1)',
-          [name, finalEmail, 'member']
+          'INSERT INTO users (name, email, password_hash, role, is_active, email_verified_at) VALUES (?, ?, NULL, ?, 1, ?)',
+          [name, finalEmail, 'member', verifiedAtValue]
         );
         const newUserId = insertUserRes.insertId;
 
@@ -611,7 +1043,7 @@ export async function setupFirstAdmin(req, res, next) {
     await connection.beginTransaction();
 
     const [insertResult] = await connection.execute(
-      "INSERT INTO users (name, email, password_hash, role, is_active) VALUES (?, ?, ?, 'admin', 1)",
+      "INSERT INTO users (name, email, password_hash, role, is_active, email_verified_at) VALUES (?, ?, ?, 'admin', 1, NOW())",
       [name.trim(), cleanEmail, passwordHash]
     );
 

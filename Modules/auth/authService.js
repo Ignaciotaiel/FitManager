@@ -25,6 +25,16 @@ export const authService = {
   // verificacion e intercambio seguro de token o codigo de google
   verifyGoogle: async (payload) => {
     return apiClient.post('/auth/google/verify', payload);
+  },
+
+  // verificacion del codigo de 6 digitos enviado por email
+  verifyEmail: async (email, code) => {
+    return apiClient.post('/auth/verify-email', { email, code });
+  },
+
+  // reenvio de codigo de verificacion de 6 digitos
+  resendVerification: async (email) => {
+    return apiClient.post('/auth/resend-verification', { email });
   }
 };
 
