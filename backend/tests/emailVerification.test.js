@@ -4,6 +4,7 @@ import express from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { sendEmail } from '../services/emailService.js';
 
 describe('Pruebas Exhaustivas: Verificación de Correo Electrónico en Registro', () => {
   let app;
@@ -826,89 +827,269 @@ describe('Pruebas Exhaustivas: Verificación de Correo Electrónico en Registro'
     delete process.env.MAINTENANCE_REGISTRATION;
   });
 
-  // Test 17: emailService con Nodemailer simula envio exitoso y devuelve messageId
-  test('17. emailService con Nodemailer procesa parametros requeridos y devuelve formato { ok: true, id }', async () => {
-    // Verificamos el contrato de sendEmail simulando el envio
-    const mockEmailOptions = {
-      to: 'socio@fitmanager.test',
-      subject: '123456 es tu código de verificación de FitManager',
-      html: '<h1>123456</h1>',
-      text: 'Tu código es 123456',
-      from: 'FitManager <tu_cuenta@gmail.com>'
+  // Helper para ejecutar tests de sendEmail con entorno y fetch interceptado de forma segura
+  async function runSendEmailTest({ env = {}, mockFetch, testFn }) {
+    const originalFetch = globalThis.fetch;
+    const originalEnvUrl = process.env.GAS_EMAIL_URL;
+    const originalEnvKey = process.env.GAS_SECRET_KEY;
+
+    try {
+      process.env.GAS_EMAIL_URL = env.GAS_EMAIL_URL ?? 'https://script.google.com/macros/s/mock_deployment_id/exec';
+      process.env.GAS_SECRET_KEY = env.GAS_SECRET_KEY ?? 'mock_secret_key_123';
+
+      if (mockFetch) {
+        globalThis.fetch = mockFetch;
+      }
+
+      await testFn();
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (originalEnvUrl !== undefined) {
+        process.env.GAS_EMAIL_URL = originalEnvUrl;
+      } else {
+        delete process.env.GAS_EMAIL_URL;
+      }
+
+      if (originalEnvKey !== undefined) {
+        process.env.GAS_SECRET_KEY = originalEnvKey;
+      } else {
+        delete process.env.GAS_SECRET_KEY;
+      }
+    }
+  }
+
+  // Test 17: sendEmail realiza POST con URL, headers, redirect: 'follow', payload y devuelve { ok: true, id }
+  test('17. sendEmail() realiza POST correcto con URL, payload y redirect a Google Apps Script', async () => {
+    let capturedUrl = null;
+    let capturedOptions = null;
+
+    const mockFetch = async (url, options) => {
+      capturedUrl = url;
+      capturedOptions = options;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, id: 'gas_msg_valid_12345' })
+      };
     };
 
-    assert.ok(mockEmailOptions.to);
-    assert.ok(mockEmailOptions.subject);
-    assert.ok(mockEmailOptions.html);
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        const result = await sendEmail({
+          to: 'socio@fitmanager.test',
+          subject: '123456 es tu código',
+          html: '<p>123456</p>'
+        });
 
-    // Simulador del transportador Nodemailer
-    const mockTransportSend = async (options) => {
-      assert.equal(options.to, 'socio@fitmanager.test');
-      assert.ok(options.subject.includes('123456'));
-      return { messageId: '<test_msg_nodemailer_123@smtp.gmail.com>' };
-    };
+        assert.equal(capturedUrl, 'https://script.google.com/macros/s/mock_deployment_id/exec');
+        assert.equal(capturedOptions.method, 'POST');
+        assert.equal(capturedOptions.redirect, 'follow');
+        assert.equal(capturedOptions.headers['Content-Type'], 'text/plain;charset=utf-8');
 
-    const sendResult = await mockTransportSend(mockEmailOptions);
-    const standardResponse = { ok: true, id: sendResult.messageId };
+        const parsedPayload = JSON.parse(capturedOptions.body);
+        assert.equal(parsedPayload.secretKey, 'mock_secret_key_123');
+        assert.equal(parsedPayload.to, 'socio@fitmanager.test');
+        assert.equal(parsedPayload.subject, '123456 es tu código');
+        assert.equal(parsedPayload.html, '<p>123456</p>');
 
-    assert.equal(standardResponse.ok, true);
-    assert.equal(standardResponse.id, '<test_msg_nodemailer_123@smtp.gmail.com>');
+        assert.equal(result.ok, true);
+        assert.equal(result.id, 'gas_msg_valid_12345');
+      }
+    });
   });
 
-  // Test 18: emailService maneja errores de conexion SMTP de forma segura sin filtrar contrasenas
-  test('18. Fallo en conexion SMTP genera error EMAIL_SEND_FAILED sin exponer contraseñas de aplicacion', async () => {
-    const mockTransportSendError = async () => {
-      const smtpAuthError = new Error('Invalid login: 535-5.7.8 Username and Password not accepted');
-      smtpAuthError.code = 'EAUTH';
-      smtpAuthError.responseCode = 535;
-      smtpAuthError.command = 'AUTH PLAIN';
-      throw smtpAuthError;
-    };
+  // Test 18: Rechazo explícito de destinatarios en formato array
+  test('18. sendEmail() rechaza arrays de destinatarios con EMAIL_INVALID_RECIPIENT_FORMAT', async () => {
+    await runSendEmailTest({
+      mockFetch: async () => assert.fail('fetch no debe invocarse cuando el destinatario es inválido'),
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: ['socio1@fitmanager.test', 'socio2@fitmanager.test'],
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
 
-    let caughtError = null;
-    try {
-      try {
-        await mockTransportSendError();
-      } catch (err) {
-        const safeError = new Error('no fue posible enviar el correo electronico a traves de Gmail SMTP');
-        safeError.code = err.code || 'EMAIL_SEND_FAILED';
-        safeError.smtpCode = err.responseCode || null;
-        safeError.smtpCommand = err.command || null;
-        throw safeError;
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'EMAIL_INVALID_RECIPIENT_FORMAT');
+        assert.equal(caughtError.message, 'el destinatario debe ser una unica direccion de correo en formato string');
       }
-    } catch (e) {
-      caughtError = e;
-    }
-
-    assert.ok(caughtError);
-    assert.equal(caughtError.code, 'EAUTH');
-    assert.equal(caughtError.smtpCode, 535);
-    assert.equal(caughtError.smtpCommand, 'AUTH PLAIN');
-    assert.equal(caughtError.message, 'no fue posible enviar el correo electronico a traves de Gmail SMTP');
-    assert.equal(caughtError.message.includes('Password'), false, 'El mensaje seguro no debe contener detalles sensibles de contraseña');
+    });
   });
 
-  // Test 19: Si Nodemailer no devuelve un messageId valido, debe arrojar error EMAIL_SEND_NO_MESSAGE_ID sin inventar identificadores ficticios
-  test('19. Si el transporte no devuelve messageId, se arroja EMAIL_SEND_NO_MESSAGE_ID y no se genera ID ficticio', async () => {
-    const mockTransportSendWithoutId = async () => {
-      // Simula respuesta sin messageId
-      return { accepted: ['socio@fitmanager.test'], messageId: null };
+  // Test 19: Manejo de respuesta HTTP con error (ej: 502 / 500)
+  test('19. sendEmail() detecta respuesta HTTP con error y arroja HTTP_STATUS', async () => {
+    const mockFetch = async () => ({
+      ok: false,
+      status: 502,
+      json: async () => ({})
+    });
+
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: 'socio@fitmanager.test',
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
+
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'HTTP_502');
+      }
+    });
+  });
+
+  // Test 20: Manejo de respuesta con JSON inválido o página HTML de error de Google
+  test('20. sendEmail() maneja respuesta no-JSON y arroja EMAIL_GAS_INVALID_JSON', async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      }
+    });
+
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: 'socio@fitmanager.test',
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
+
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'EMAIL_GAS_INVALID_JSON');
+      }
+    });
+  });
+
+  // Test 21: Manejo de respuesta con error de autorización UNAUTHORIZED
+  test('21. sendEmail() ante error UNAUTHORIZED de Google Apps Script arroja EMAIL_GAS_UNAUTHORIZED', async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: false, error: 'UNAUTHORIZED' })
+    });
+
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: 'socio@fitmanager.test',
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
+
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'EMAIL_GAS_UNAUTHORIZED');
+      }
+    });
+  });
+
+  // Test 22: Manejo de respuesta con cuota agotada QUOTA_EXCEEDED
+  test('22. sendEmail() ante error QUOTA_EXCEEDED de Google Apps Script arroja EMAIL_GAS_QUOTA_EXCEEDED', async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: false, error: 'QUOTA_EXCEEDED' })
+    });
+
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: 'socio@fitmanager.test',
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
+
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'EMAIL_GAS_QUOTA_EXCEEDED');
+      }
+    });
+  });
+
+  // Test 23: Manejo de timeout al conectar con Google Apps Script
+  test('23. sendEmail() ante TimeoutError arroja EMAIL_TIMEOUT', async () => {
+    const mockFetch = async () => {
+      const timeoutError = new Error('The operation was aborted due to timeout');
+      timeoutError.name = 'TimeoutError';
+      throw timeoutError;
     };
 
-    let caughtError = null;
-    try {
-      const info = await mockTransportSendWithoutId();
-      if (!info || !info.messageId || typeof info.messageId !== 'string' || info.messageId.trim().length === 0) {
-        const error = new Error('no fue posible confirmar la entrega del correo: respuesta de servidor de correo sin identificador');
-        error.code = 'EMAIL_SEND_NO_MESSAGE_ID';
-        throw error;
-      }
-    } catch (e) {
-      caughtError = e;
-    }
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: 'socio@fitmanager.test',
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
 
-    assert.ok(caughtError);
-    assert.equal(caughtError.code, 'EMAIL_SEND_NO_MESSAGE_ID');
-    assert.equal(caughtError.message, 'no fue posible confirmar la entrega del correo: respuesta de servidor de correo sin identificador');
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'EMAIL_TIMEOUT');
+      }
+    });
+  });
+
+  // Test 24: Manejo de respuesta ok: true pero sin identificador id
+  test('24. sendEmail() ante respuesta ok: true sin id arroja EMAIL_SEND_NO_MESSAGE_ID', async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, id: null })
+    });
+
+    await runSendEmailTest({
+      mockFetch,
+      testFn: async () => {
+        let caughtError = null;
+        try {
+          await sendEmail({
+            to: 'socio@fitmanager.test',
+            subject: 'Asunto',
+            html: '<p>HTML</p>'
+          });
+        } catch (err) {
+          caughtError = err;
+        }
+
+        assert.ok(caughtError);
+        assert.equal(caughtError.code, 'EMAIL_SEND_NO_MESSAGE_ID');
+      }
+    });
   });
 });

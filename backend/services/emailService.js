@@ -1,70 +1,57 @@
-import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-let mailTransporter = null;
-
 /**
- * Obtiene o inicializa la instancia singleton del transportador Nodemailer con Gmail SMTP.
- * Valida la presencia de SMTP_USER y SMTP_PASS sin exponer sus valores.
+ * Valida la configuracion de Google Apps Script sin exponer secretos.
  */
-function getTransporter() {
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+function getGasConfig() {
+  const url = process.env.GAS_EMAIL_URL;
+  const secretKey = process.env.GAS_SECRET_KEY;
 
-  if (!user || typeof user !== 'string' || user.trim().length === 0) {
-    const error = new Error('el servicio de correo no esta configurado: falta SMTP_USER');
-    error.code = 'EMAIL_CONFIG_MISSING_USER';
+  if (!url || typeof url !== 'string' || url.trim().length === 0) {
+    const error = new Error('el servicio de correo no esta configurado: falta GAS_EMAIL_URL');
+    error.code = 'EMAIL_CONFIG_MISSING_URL';
     throw error;
   }
 
-  if (!pass || typeof pass !== 'string' || pass.trim().length === 0) {
-    const error = new Error('el servicio de correo no esta configurado: falta SMTP_PASS');
-    error.code = 'EMAIL_CONFIG_MISSING_PASS';
+  if (!secretKey || typeof secretKey !== 'string' || secretKey.trim().length === 0) {
+    const error = new Error('el servicio de correo no esta configurado: falta GAS_SECRET_KEY');
+    error.code = 'EMAIL_CONFIG_MISSING_KEY';
     throw error;
   }
 
-  if (!mailTransporter) {
-    mailTransporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, // SSL en puerto 465
-      auth: {
-        user: user.trim(),
-        pass: pass.trim()
-      }
-    });
-  }
-
-  return mailTransporter;
+  return {
+    url: url.trim(),
+    secretKey: secretKey.trim()
+  };
 }
 
 /**
- * Envia un correo electronico utilizando Gmail SMTP a traves de Nodemailer.
- * Mantiene exactamente la firma publica: sendEmail({ to, subject, html, text, from })
- * y el formato de respuesta: { ok: true, id: messageId }
+ * Envia un correo electronico utilizando Google Apps Script Web App mediante HTTPS.
+ * Mantiene la firma publica: sendEmail({ to, subject, html, text, from })
+ * y el formato de respuesta: { ok: true, id }
  *
  * @param {Object} options
- * @param {string|string[]} options.to - Direccion(es) de correo destinatario
+ * @param {string} options.to - Direccion de correo destinatario (debe ser string unico)
  * @param {string} options.subject - Asunto del correo
  * @param {string} options.html - Contenido del correo en formato HTML
  * @param {string} [options.text] - Version en texto plano opcional
- * @param {string} [options.from] - Remitente opcional (por defecto usa process.env.SMTP_FROM_EMAIL)
- * @returns {Promise<{ ok: boolean, id?: string }>}
+ * @param {string} [options.from] - Remitente opcional (informativo)
+ * @returns {Promise<{ ok: boolean, id: string }>}
  */
 export async function sendEmail({ to, subject, html, text, from }) {
-  // Validacion de remitente predeterminado
-  const sender = from || process.env.SMTP_FROM_EMAIL;
-  if (!sender || typeof sender !== 'string' || sender.trim().length === 0) {
-    const error = new Error('el servicio de correo no esta configurado: falta SMTP_FROM_EMAIL');
-    error.code = 'EMAIL_CONFIG_MISSING_FROM_EMAIL';
+  const { url, secretKey } = getGasConfig();
+
+  // Validacion estricta: to debe ser obligatoriamente un string (no se aceptan arrays)
+  if (Array.isArray(to)) {
+    const error = new Error('el destinatario debe ser una unica direccion de correo en formato string');
+    error.code = 'EMAIL_INVALID_RECIPIENT_FORMAT';
     throw error;
   }
 
-  // Validacion de parametros requeridos
-  if (!to) {
-    const error = new Error('debes especificar al menos un destinatario');
+  if (!to || typeof to !== 'string' || to.trim().length === 0) {
+    const error = new Error('debes especificar un destinatario valido');
     error.code = 'EMAIL_MISSING_RECIPIENT';
     throw error;
   }
@@ -81,42 +68,70 @@ export async function sendEmail({ to, subject, html, text, from }) {
     throw error;
   }
 
-  const transporter = getTransporter();
-  const recipientList = Array.isArray(to) ? to.join(', ') : to;
-
-  const mailOptions = {
-    from: sender.trim(),
-    to: recipientList,
+  const payload = {
+    secretKey,
+    to: to.trim(),
     subject: subject.trim(),
     html: html.trim()
   };
 
-  if (text && typeof text === 'string' && text.trim().length > 0) {
-    mailOptions.text = text.trim();
-  }
-
   try {
-    const info = await transporter.sendMail(mailOptions);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000)
+    });
 
-    if (!info || !info.messageId || typeof info.messageId !== 'string' || info.messageId.trim().length === 0) {
-      const error = new Error('no fue posible confirmar la entrega del correo: respuesta de servidor de correo sin identificador');
+    if (!response.ok) {
+      const error = new Error('fallo en la comunicacion con el servicio de correo');
+      error.code = `HTTP_${response.status}`;
+      throw error;
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseErr) {
+      const error = new Error('respuesta invalida del servicio de correo');
+      error.code = 'EMAIL_GAS_INVALID_JSON';
+      throw error;
+    }
+
+    // Comprobacion explicita del estado de exito del JSON devuelto por Google Apps Script
+    if (!data || data.ok !== true) {
+      const errorCode = data?.error ? `EMAIL_GAS_${data.error}` : 'EMAIL_SEND_FAILED';
+      const error = new Error('el servicio de correo no pudo procesar la solicitud');
+      error.code = errorCode;
+      throw error;
+    }
+
+    if (!data.id || typeof data.id !== 'string' || data.id.trim().length === 0) {
+      const error = new Error('respuesta del servicio de correo sin identificador de entrega');
       error.code = 'EMAIL_SEND_NO_MESSAGE_ID';
       throw error;
     }
 
     return {
       ok: true,
-      id: info.messageId.trim()
+      id: data.id.trim()
     };
   } catch (err) {
-    if (err.code === 'EMAIL_SEND_NO_MESSAGE_ID') {
+    if (err.code && err.code.startsWith('EMAIL_')) {
       throw err;
     }
-    // Manejo seguro de errores sin exponer contrasenas ni secretos de configuracion
-    const safeError = new Error('no fue posible enviar el correo electronico a traves de Gmail SMTP');
+
+    if (err.name === 'TimeoutError') {
+      const error = new Error('tiempo de espera agotado al conectar con el servicio de correo');
+      error.code = 'EMAIL_TIMEOUT';
+      throw error;
+    }
+
+    const safeError = new Error('no fue posible enviar el correo electronico a traves de Google Apps Script');
     safeError.code = err.code || 'EMAIL_SEND_FAILED';
-    safeError.smtpCode = err.responseCode || null;
-    safeError.smtpCommand = err.command || null;
     throw safeError;
   }
 }

@@ -181,11 +181,7 @@ export async function register(req, res, next) {
     // Enviar el correo con el código de verificación en segundo plano
     // No bloquea la respuesta ni expone el código en el payload
     sendVerificationCodeEmail(cleanEmail, name.trim(), code).catch(err => {
-      const details = [
-        err.code ? `code=${err.code}` : null,
-        err.smtpCode ? `responseCode=${err.smtpCode}` : null,
-        err.smtpCommand ? `command=${err.smtpCommand}` : null
-      ].filter(Boolean).join(' ');
+      const details = err.code ? `code=${err.code}` : null;
       console.error(`[emailService] Error al enviar código de verificación en registro: ${err.message}${details ? ` (${details})` : ''}`);
     });
 
@@ -590,13 +586,9 @@ export async function resendVerificationCode(req, res, next) {
 
     await connection.commit();
 
-    // 5. Enviar el nuevo código por correo mediante Gmail SMTP
+    // 5. Enviar el nuevo código por correo mediante Google Apps Script
     sendVerificationCodeEmail(user.email, user.name, code).catch(err => {
-      const details = [
-        err.code ? `code=${err.code}` : null,
-        err.smtpCode ? `responseCode=${err.smtpCode}` : null,
-        err.smtpCommand ? `command=${err.smtpCommand}` : null
-      ].filter(Boolean).join(' ');
+      const details = err.code ? `code=${err.code}` : null;
       console.error(`[emailService] Error al reenviar código de verificación: ${err.message}${details ? ` (${details})` : ''}`);
     });
 
