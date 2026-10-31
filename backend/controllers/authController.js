@@ -4,6 +4,12 @@ import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 import { isValidEmail, isValidPassword, isValidRole } from '../middlewares/validate.js';
 import { sendEmail } from '../services/emailService.js';
+import {
+  generateOAuthState,
+  consumeOAuthState,
+  createLoginTicket,
+  consumeLoginTicket
+} from '../services/oauthTicketService.js';
 
 // duracion del salt para hash con bcrypt
 const SALT_ROUNDS = 10;
@@ -970,9 +976,192 @@ export function oauthGithub(req, res) {
     });
   }
 
-  const callbackUrl = process.env.GITHUB_CALLBACK_URL;
-  const redirectUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=read:user%20user:email`;
+  // Generar state criptográfico seguro para prevenir CSRF
+  const state = generateOAuthState('github', 'android');
+
+  const callbackUrl = process.env.GITHUB_CALLBACK_URL || 'https://fitmanager-backend-ekfc.onrender.com/api/auth/github/callback';
+  const redirectUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=read:user%20user:email&state=${encodeURIComponent(state)}`;
   res.redirect(redirectUrl);
+}
+
+export async function oauthGithubCallback(req, res, next) {
+  let connection;
+  try {
+    const { code, state, error: oauthError } = req.query;
+
+    if (oauthError) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent(oauthError)}`);
+    }
+
+    // 1. Validar state de un solo uso
+    const stateCheck = consumeOAuthState(state, 'github');
+    if (!stateCheck.valid) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('INVALID_OR_EXPIRED_STATE')}`);
+    }
+
+    if (!code) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('MISSING_AUTH_CODE')}`);
+    }
+
+    const clientId = process.env.GITHUB_CLIENT_ID;
+    const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('OAUTH_NOT_CONFIGURED')}`);
+    }
+
+    // 2. Canjear authorization code por access_token de GitHub
+    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code
+      })
+    });
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenData.access_token) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent(tokenData.error || 'GITHUB_TOKEN_EXCHANGE_FAILED')}`);
+    }
+
+    const ghAccessToken = tokenData.access_token;
+
+    // 3. Obtener perfil de GitHub
+    const userRes = await fetch('https://api.github.com/user', {
+      headers: {
+        'Authorization': `Bearer ${ghAccessToken}`,
+        'User-Agent': 'FitManager-App'
+      }
+    });
+
+    if (!userRes.ok) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('GITHUB_PROFILE_ERROR')}`);
+    }
+
+    const ghUser = await userRes.json();
+    const providerUserId = String(ghUser.id);
+
+    // 4. Obtener emails de GitHub para encontrar el email primario y verificado
+    const emailsRes = await fetch('https://api.github.com/user/emails', {
+      headers: {
+        'Authorization': `Bearer ${ghAccessToken}`,
+        'User-Agent': 'FitManager-App'
+      }
+    });
+
+    let verifiedEmail = null;
+    if (emailsRes.ok) {
+      const emails = await emailsRes.json();
+      if (Array.isArray(emails)) {
+        const primaryVerified = emails.find(e => e.primary && e.verified);
+        if (primaryVerified) {
+          verifiedEmail = primaryVerified.email.trim().toLowerCase();
+        } else {
+          const anyVerified = emails.find(e => e.verified);
+          if (anyVerified) {
+            verifiedEmail = anyVerified.email.trim().toLowerCase();
+          }
+        }
+      }
+    }
+
+    if (!verifiedEmail && ghUser.email) {
+      verifiedEmail = ghUser.email.trim().toLowerCase();
+    }
+
+    if (!verifiedEmail) {
+      return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('GITHUB_EMAIL_NOT_VERIFIED')}`);
+    }
+
+    const name = ghUser.name || ghUser.login || verifiedEmail.split('@')[0];
+
+    // 5. Vincular o crear usuario en la base de datos
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [socialRows] = await connection.execute(
+      `SELECT sa.id AS social_account_id, u.id AS id, u.name, u.email, u.role, u.is_active, u.token_version
+       FROM social_accounts sa
+       INNER JOIN users u ON sa.user_id = u.id
+       WHERE sa.provider = 'github' AND sa.provider_user_id = ?`,
+      [providerUserId]
+    );
+
+    let authenticatedUser;
+
+    if (socialRows.length > 0) {
+      authenticatedUser = socialRows[0];
+      if (!authenticatedUser.is_active) {
+        await connection.rollback();
+        return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('ACCOUNT_INACTIVE')}`);
+      }
+    } else {
+      // Buscar si ya existe por email verificado
+      const [userRows] = await connection.execute(
+        'SELECT id, name, email, role, is_active, token_version FROM users WHERE email = ?',
+        [verifiedEmail]
+      );
+
+      let existingUser = userRows.length > 0 ? userRows[0] : null;
+
+      if (existingUser) {
+        if (!existingUser.is_active) {
+          await connection.rollback();
+          return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('ACCOUNT_INACTIVE')}`);
+        }
+        await connection.execute(
+          'INSERT INTO social_accounts (user_id, provider, provider_user_id) VALUES (?, ?, ?)',
+          [existingUser.id, 'github', providerUserId]
+        );
+        authenticatedUser = existingUser;
+      } else {
+        // Crear nuevo usuario con rol estricto 'member' y token_version 1
+        const [insertUserRes] = await connection.execute(
+          'INSERT INTO users (name, email, password_hash, role, is_active, email_verified_at) VALUES (?, ?, NULL, ?, 1, NOW())',
+          [name, verifiedEmail, 'member']
+        );
+        const newUserId = insertUserRes.insertId;
+
+        await connection.execute(
+          'INSERT INTO social_accounts (user_id, provider, provider_user_id) VALUES (?, ?, ?)',
+          [newUserId, 'github', providerUserId]
+        );
+
+        authenticatedUser = {
+          id: newUserId,
+          name,
+          email: verifiedEmail,
+          role: 'member',
+          is_active: 1,
+          token_version: 1
+        };
+      }
+    }
+
+    await connection.commit();
+
+    // 6. Generar ticket de un solo uso para redirigir a la APK
+    const ticket = createLoginTicket(authenticatedUser, 'github');
+
+    return res.redirect(`fitmanager://oauth/github?ticket=${encodeURIComponent(ticket)}`);
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
+    console.error('[oauthGithubCallback] Error:', error.message);
+    return res.redirect(`fitmanager://oauth/github?error=${encodeURIComponent('INTERNAL_SERVER_ERROR')}`);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
 }
 
 export function oauthDiscord(req, res) {
@@ -988,9 +1177,236 @@ export function oauthDiscord(req, res) {
     });
   }
 
-  const callbackUrl = process.env.DISCORD_CALLBACK_URL;
-  const redirectUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code&scope=identify%20email`;
+  // Generar state criptográfico seguro para prevenir CSRF
+  const state = generateOAuthState('discord', 'android');
+
+  const callbackUrl = process.env.DISCORD_CALLBACK_URL || 'https://fitmanager-backend-ekfc.onrender.com/api/auth/discord/callback';
+  const redirectUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code&scope=identify%20email&state=${encodeURIComponent(state)}`;
   res.redirect(redirectUrl);
+}
+
+export async function oauthDiscordCallback(req, res, next) {
+  let connection;
+  try {
+    const { code, state, error: oauthError } = req.query;
+
+    if (oauthError) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent(oauthError)}`);
+    }
+
+    // 1. Validar state de un solo uso
+    const stateCheck = consumeOAuthState(state, 'discord');
+    if (!stateCheck.valid) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('INVALID_OR_EXPIRED_STATE')}`);
+    }
+
+    if (!code) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('MISSING_AUTH_CODE')}`);
+    }
+
+    const clientId = process.env.DISCORD_CLIENT_ID;
+    const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+    const callbackUrl = process.env.DISCORD_CALLBACK_URL || 'https://fitmanager-backend-ekfc.onrender.com/api/auth/discord/callback';
+
+    if (!clientId || !clientSecret) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('OAUTH_NOT_CONFIGURED')}`);
+    }
+
+    // 2. Canjear authorization code por token de Discord
+    const tokenParams = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: callbackUrl
+    });
+
+    const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: tokenParams.toString()
+    });
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenData.access_token) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent(tokenData.error || 'DISCORD_TOKEN_EXCHANGE_FAILED')}`);
+    }
+
+    const discordAccessToken = tokenData.access_token;
+
+    // 3. Obtener perfil del usuario desde Discord API
+    const userRes = await fetch('https://discord.com/api/users/@me', {
+      headers: {
+        'Authorization': `Bearer ${discordAccessToken}`
+      }
+    });
+
+    if (!userRes.ok) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('DISCORD_PROFILE_ERROR')}`);
+    }
+
+    const discordUser = await userRes.json();
+    const providerUserId = String(discordUser.id);
+
+    // 4. Verificar email obligatorio y verificado
+    if (!discordUser.email || discordUser.verified !== true) {
+      return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('DISCORD_EMAIL_NOT_VERIFIED')}`);
+    }
+
+    const verifiedEmail = discordUser.email.trim().toLowerCase();
+    const name = discordUser.global_name || discordUser.username || verifiedEmail.split('@')[0];
+
+    // 5. Vincular o crear usuario en MariaDB
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [socialRows] = await connection.execute(
+      `SELECT sa.id AS social_account_id, u.id AS id, u.name, u.email, u.role, u.is_active, u.token_version
+       FROM social_accounts sa
+       INNER JOIN users u ON sa.user_id = u.id
+       WHERE sa.provider = 'discord' AND sa.provider_user_id = ?`,
+      [providerUserId]
+    );
+
+    let authenticatedUser;
+
+    if (socialRows.length > 0) {
+      authenticatedUser = socialRows[0];
+      if (!authenticatedUser.is_active) {
+        await connection.rollback();
+        return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('ACCOUNT_INACTIVE')}`);
+      }
+    } else {
+      // Buscar si ya existe por email verificado
+      const [userRows] = await connection.execute(
+        'SELECT id, name, email, role, is_active, token_version FROM users WHERE email = ?',
+        [verifiedEmail]
+      );
+
+      let existingUser = userRows.length > 0 ? userRows[0] : null;
+
+      if (existingUser) {
+        if (!existingUser.is_active) {
+          await connection.rollback();
+          return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('ACCOUNT_INACTIVE')}`);
+        }
+        await connection.execute(
+          'INSERT INTO social_accounts (user_id, provider, provider_user_id) VALUES (?, ?, ?)',
+          [existingUser.id, 'discord', providerUserId]
+        );
+        authenticatedUser = existingUser;
+      } else {
+        // Crear nuevo usuario con rol estricto 'member' y token_version 1
+        const [insertUserRes] = await connection.execute(
+          'INSERT INTO users (name, email, password_hash, role, is_active, email_verified_at) VALUES (?, ?, NULL, ?, 1, NOW())',
+          [name, verifiedEmail, 'member']
+        );
+        const newUserId = insertUserRes.insertId;
+
+        await connection.execute(
+          'INSERT INTO social_accounts (user_id, provider, provider_user_id) VALUES (?, ?, ?)',
+          [newUserId, 'discord', providerUserId]
+        );
+
+        authenticatedUser = {
+          id: newUserId,
+          name,
+          email: verifiedEmail,
+          role: 'member',
+          is_active: 1,
+          token_version: 1
+        };
+      }
+    }
+
+    await connection.commit();
+
+    // 6. Generar ticket de un solo uso para redirigir a la APK
+    const ticket = createLoginTicket(authenticatedUser, 'discord');
+
+    return res.redirect(`fitmanager://oauth/discord?ticket=${encodeURIComponent(ticket)}`);
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
+    console.error('[oauthDiscordCallback] Error:', error.message);
+    return res.redirect(`fitmanager://oauth/discord?error=${encodeURIComponent('INTERNAL_SERVER_ERROR')}`);
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+}
+
+/**
+ * Endpoint de canje de ticket por JWT para la APK (POST /api/auth/oauth/exchange-ticket)
+ * Recibe { ticket }, lo valida, lo invalida (un solo uso) y emite el JWT oficial de FitManager.
+ */
+export async function exchangeOAuthTicket(req, res, next) {
+  try {
+    const { ticket } = req.body;
+
+    if (!ticket || typeof ticket !== 'string') {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'debes proporcionar un ticket de intercambio válido', code: 'MISSING_TICKET' }
+      });
+    }
+
+    const ticketResult = consumeLoginTicket(ticket);
+    if (!ticketResult.valid) {
+      return res.status(401).json({
+        ok: false,
+        error: {
+          message: 'el ticket de autenticación es inválido, expiró o ya fue utilizado',
+          code: ticketResult.error || 'INVALID_TICKET'
+        }
+      });
+    }
+
+    const user = ticketResult.user;
+
+    // Verificar en base de datos el token_version actual
+    let tokenVersion = 1;
+    try {
+      const [uRows] = await pool.execute('SELECT token_version, is_active FROM users WHERE id = ? LIMIT 1', [user.id]);
+      if (uRows.length > 0) {
+        if (!uRows[0].is_active) {
+          return res.status(403).json({
+            ok: false,
+            error: { message: 'la cuenta se encuentra desactivada', code: 'ACCOUNT_INACTIVE' }
+          });
+        }
+        tokenVersion = uRows[0].token_version || 1;
+      }
+    } catch {}
+
+    user.token_version = tokenVersion;
+
+    // Generar JWT oficial de FitManager
+    const jwtToken = generateToken(user);
+
+    return res.status(200).json({
+      ok: true,
+      message: `inicio de sesión con ${ticketResult.provider} exitoso`,
+      data: {
+        token: jwtToken,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          is_active: user.is_active
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
 }
 
 // Inicializacion segura del primer administrador del sistema

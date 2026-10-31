@@ -50,6 +50,11 @@ export const authService = {
   // recuperacion de contrasena: establecer nueva contrasena usando el reset_token de un solo uso
   resetPassword: async (resetToken, newPassword) => {
     return apiClient.post('/auth/reset-password', { resetToken, newPassword });
+  },
+
+  // canje de ticket oauth (github / discord) por jwt oficial de fitmanager
+  exchangeOAuthTicket: async (ticket) => {
+    return apiClient.post('/auth/oauth/exchange-ticket', { ticket });
   }
 };
 

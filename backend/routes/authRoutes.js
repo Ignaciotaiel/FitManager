@@ -9,7 +9,10 @@ import {
   oauthGoogle,
   verifyGoogleAuth,
   oauthGithub,
+  oauthGithubCallback,
   oauthDiscord,
+  oauthDiscordCallback,
+  exchangeOAuthTicket,
   forgotPassword,
   verifyResetCode,
   resetPassword
@@ -39,6 +42,9 @@ router.get('/me', verifyToken, getCurrentUser);
 router.get('/google', oauthGoogle);
 router.post('/google/verify', verifyGoogleAuth);
 router.get('/github', oauthGithub);
+router.get('/github/callback', oauthGithubCallback);
 router.get('/discord', oauthDiscord);
+router.get('/discord/callback', oauthDiscordCallback);
+router.post('/oauth/exchange-ticket', exchangeOAuthTicket);
 
 export default router;

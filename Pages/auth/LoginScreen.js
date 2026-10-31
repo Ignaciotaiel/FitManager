@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,16 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  TouchableOpacity
+  TouchableOpacity,
+  Linking
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as WebBrowser from 'expo-web-browser';
 import { useForm, Controller } from 'react-hook-form';
 import { useTheme } from '../../contexto/themeContext.js';
 import { useAuth } from '../../contexto/authContext.js';
 import { authService } from '../../Modules/auth/authService.js';
+import { API_BASE_URL } from '../../Modules/api/client.js';
 import {
   Button,
   Input,
@@ -34,6 +37,98 @@ export function LoginScreen({ navigation }) {
   const [socialLoading, setSocialLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [socialInfo, setSocialInfo] = useState(null);
+
+  // Control para evitar procesar dos veces el mismo deep link o ticket
+  const processedTicketsRef = useRef(new Set());
+  const isOAuthInProgressRef = useRef(false);
+
+  // Funcion centralizada para procesar el deep link entrante y canjear el ticket
+  const processOAuthUrl = useCallback(async (url) => {
+    if (!url || typeof url !== 'string' || !url.startsWith('fitmanager://oauth/')) {
+      return;
+    }
+
+    setSocialLoading(true);
+    setErrorMessage(null);
+    setSocialInfo(null);
+
+    try {
+      const parsedUrl = new URL(url);
+      const errorParam = parsedUrl.searchParams.get('error');
+      const ticketParam = parsedUrl.searchParams.get('ticket');
+
+      if (errorParam) {
+        if (errorParam === 'access_denied') {
+          setSocialInfo('Inicio de sesión cancelado por el usuario.');
+        } else if (errorParam === 'GITHUB_EMAIL_NOT_VERIFIED' || errorParam === 'DISCORD_EMAIL_NOT_VERIFIED') {
+          setErrorMessage('Tu cuenta en ese proveedor no tiene un correo electrónico verificado.');
+        } else if (errorParam === 'ACCOUNT_INACTIVE') {
+          setErrorMessage('Tu cuenta se encuentra desactivada. Contactá al administrador.');
+        } else if (errorParam === 'INVALID_OR_EXPIRED_STATE') {
+          setErrorMessage('La sesión de autorización expiró o no es válida. Intentá nuevamente.');
+        } else {
+          setErrorMessage(`Error en la autorización externa (${errorParam}).`);
+        }
+        return;
+      }
+
+      if (!ticketParam) {
+        setErrorMessage('No se recibió el ticket de autenticación necesario.');
+        return;
+      }
+
+      // Prevenir reprocesar dos veces el mismo ticket (tanto por openAuthSessionAsync como por el listener de Linking)
+      if (processedTicketsRef.current.has(ticketParam)) {
+        return;
+      }
+      processedTicketsRef.current.add(ticketParam);
+
+      // Canjear ticket efímero por JWT mediante HTTPS
+      const exchangeRes = await authService.exchangeOAuthTicket(ticketParam);
+
+      if (exchangeRes?.ok && exchangeRes?.data?.token) {
+        await login(exchangeRes.data.token, exchangeRes.data.user);
+      } else {
+        setErrorMessage(exchangeRes?.error?.message || 'No fue posible completar el inicio de sesión.');
+      }
+    } catch (err) {
+      if (err.code === 'TIMEOUT_ERROR') {
+        setErrorMessage('El servidor tardó en responder. Por favor intentá nuevamente.');
+      } else if (err.code === 'NETWORK_ERROR') {
+        setErrorMessage('No se pudo conectar con el servidor.');
+      } else if (err.status === 401) {
+        setErrorMessage('El ticket de autenticación expiró o ya fue utilizado.');
+      } else if (err.status === 403) {
+        setErrorMessage('Tu cuenta vinculada se encuentra desactivada.');
+      } else {
+        setErrorMessage(err.message || 'Error inesperado al procesar la autenticación social.');
+      }
+    } finally {
+      setSocialLoading(false);
+      isOAuthInProgressRef.current = false;
+    }
+  }, [login]);
+
+  // Manejo de Deep Links entrantes de respaldo (fitmanager://oauth/github o fitmanager://oauth/discord)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const handleDeepLink = async (event) => {
+      await processOAuthUrl(event?.url);
+    };
+
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    Linking.getInitialURL().then((initialUrl) => {
+      if (initialUrl) {
+        processOAuthUrl(initialUrl);
+      }
+    }).catch(() => {});
+
+    return () => {
+      subscription?.remove();
+    };
+  }, [processOAuthUrl]);
 
   const {
     control,
@@ -174,23 +269,51 @@ export function LoginScreen({ navigation }) {
       return;
     }
 
-    // Para github y discord (Fase 2B)
-    try {
-      setSocialLoading(true);
-      await authService.checkOAuthStatus(provider);
-      setSocialInfo(`proveedor ${provider} preparado para la siguiente fase.`);
-    } catch (error) {
-      if (error.code === 'OAUTH_NOT_CONFIGURED' || error.status === 501) {
+    // Flujo OAuth para GitHub y Discord en la app móvil mediante WebBrowser con Chrome Custom Tabs
+    if (provider === 'github' || provider === 'discord') {
+      if (Platform.OS === 'web') {
         setSocialInfo(
-          `el inicio de sesion con ${provider} requiere credenciales oauth en backend/.env (aun no configuradas).`
+          `El inicio de sesión con ${provider.toUpperCase()} está optimizado para la aplicación móvil Android.`
         );
-      } else if (error.code === 'NETWORK_ERROR') {
-        setErrorMessage('no se pudo verificar el proveedor social. el servidor no responde.');
-      } else {
-        setSocialInfo(`estado de ${provider}: ${error.message}`);
+        return;
       }
-    } finally {
-      setSocialLoading(false);
+
+      if (isOAuthInProgressRef.current) {
+        setSocialInfo(`Ya hay una autenticación en curso con ${provider.toUpperCase()}.`);
+        return;
+      }
+
+      isOAuthInProgressRef.current = true;
+      setSocialLoading(true);
+
+      try {
+        const targetUrl = `${API_BASE_URL}/auth/${provider}`;
+        const redirectUrl = `fitmanager://oauth/${provider}`;
+
+        // Abre Custom Tab segura que detecta cancelaciones nativas al cerrar la pestaña o pulsar atrás
+        const result = await WebBrowser.openAuthSessionAsync(targetUrl, redirectUrl);
+
+        if (result.type === 'success' && result.url) {
+          // El usuario completó la autorización y el navegador devolvió el deep link
+          await processOAuthUrl(result.url);
+        } else if (result.type === 'cancel' || result.type === 'dismiss') {
+          // El usuario canceló voluntariamente o cerró el navegador del sistema
+          isOAuthInProgressRef.current = false;
+          setSocialLoading(false);
+          setSocialInfo('Inicio de sesión cancelado.');
+        } else {
+          // Otros estados o fallos de apertura
+          isOAuthInProgressRef.current = false;
+          setSocialLoading(false);
+        }
+      } catch (err) {
+        isOAuthInProgressRef.current = false;
+        setSocialLoading(false);
+        setErrorMessage(
+          err.message || `No fue posible abrir el navegador para iniciar sesión con ${provider.toUpperCase()}.`
+        );
+      }
+      return;
     }
   };
 
