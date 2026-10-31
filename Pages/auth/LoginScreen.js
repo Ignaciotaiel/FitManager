@@ -289,6 +289,18 @@ export function LoginScreen({ navigation }) {
               )}
             />
 
+            <View style={styles.forgotPasswordContainer}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('ForgotPassword')}
+                accessibilityRole="button"
+                accessibilityLabel="Recuperar contraseña olvidada"
+              >
+                <Text style={[styles.forgotPasswordText, { color: colors.primary }]}>
+                  ¿Olvidaste tu contraseña?
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <Button
               title="INGRESAR"
               onPress={handleSubmit(onSubmit)}
@@ -420,6 +432,15 @@ const styles = StyleSheet.create({
   formCard: {
     marginTop: 4,
     padding: 14
+  },
+  forgotPasswordContainer: {
+    alignItems: 'flex-end',
+    marginTop: 4,
+    marginBottom: 8
+  },
+  forgotPasswordText: {
+    fontSize: 12,
+    fontWeight: '700'
   },
   submitBtn: {
     marginTop: 8

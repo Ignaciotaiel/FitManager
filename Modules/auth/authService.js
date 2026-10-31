@@ -35,6 +35,21 @@ export const authService = {
   // reenvio de codigo de verificacion de 6 digitos
   resendVerification: async (email) => {
     return apiClient.post('/auth/resend-verification', { email });
+  },
+
+  // recuperacion de contrasena: solicitar envio de codigo al correo
+  forgotPassword: async (email) => {
+    return apiClient.post('/auth/forgot-password', { email });
+  },
+
+  // recuperacion de contrasena: verificar codigo de 6 digitos y obtener reset_token temporal
+  verifyResetCode: async (email, code) => {
+    return apiClient.post('/auth/verify-reset-code', { email, code });
+  },
+
+  // recuperacion de contrasena: establecer nueva contrasena usando el reset_token de un solo uso
+  resetPassword: async (resetToken, newPassword) => {
+    return apiClient.post('/auth/reset-password', { resetToken, newPassword });
   }
 };
 
