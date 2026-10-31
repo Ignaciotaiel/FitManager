@@ -15,6 +15,10 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://fitmanager-backend-ekfc.onrender.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "713473400704-vr1rv1b66qdi1qnrvna1khlqn0gmtk5g.apps.googleusercontent.com"
       }
     },
     "production": {

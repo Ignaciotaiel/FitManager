@@ -26,6 +26,7 @@ export function MemberDashboardScreen({ navigation }) {
   const { token, user } = useAuth();
 
   const [routines, setRoutines] = useState([]);
+  const [activeSessionsByRoutine, setActiveSessionsByRoutine] = useState({});
   const [lastSession, setLastSession] = useState(null);
   const [totalSessionsCount, setTotalSessionsCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -40,10 +41,34 @@ export function MemberDashboardScreen({ navigation }) {
         workoutService.getHistory({ limit: 1 }, token).catch(() => ({ ok: false }))
       ]);
 
+      let loadedRoutines = [];
       if (routineRes?.ok && Array.isArray(routineRes?.data?.routines)) {
-        setRoutines(routineRes.data.routines);
+        loadedRoutines = routineRes.data.routines;
+        setRoutines(loadedRoutines);
       } else if (routineRes?.error) {
         throw routineRes.error;
+      }
+
+      // Consultar sesiones activas en paralelo para cada rutina
+      if (loadedRoutines.length > 0) {
+        try {
+          const activeChecks = await Promise.all(
+            loadedRoutines.map(r =>
+              workoutService.getActiveSession(r.id, token)
+                .then(res => ({ routineId: r.id, session: res?.data?.active_session || null }))
+                .catch(() => ({ routineId: r.id, session: null }))
+            )
+          );
+          const activeMap = {};
+          activeChecks.forEach(item => {
+            if (item.session) {
+              activeMap[item.routineId] = item.session;
+            }
+          });
+          setActiveSessionsByRoutine(activeMap);
+        } catch (_) {}
+      } else {
+        setActiveSessionsByRoutine({});
       }
 
       if (historyRes?.ok && Array.isArray(historyRes?.data?.sessions)) {
@@ -75,23 +100,30 @@ export function MemberDashboardScreen({ navigation }) {
     loadDashboardData();
   }, [loadDashboardData]);
 
+  // Actualizar el estado de sesión activa al regresar a esta pantalla
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadDashboardData();
+    });
+    return unsubscribe;
+  }, [navigation, loadDashboardData]);
+
   const onRefresh = () => {
     setRefreshing(true);
     loadDashboardData();
   };
 
-  const primaryRoutine = routines.length > 0 ? routines[0] : null;
-  const secondaryRoutines = routines.length > 1 ? routines.slice(1) : [];
-
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.container}>
-        <DashboardHeader
-          title="MI ENTRENAMIENTO"
-          subtitle="panel principal y seguimiento de rutinas"
-        />
+        <View style={styles.headerContainer}>
+          <DashboardHeader
+            title="MI ENTRENAMIENTO"
+            subtitle="panel principal y seguimiento de rutinas"
+          />
 
-        {errorMessage && <StatusBanner message={errorMessage} type="error" />}
+          {errorMessage && <StatusBanner message={errorMessage} type="error" />}
+        </View>
 
         {loading ? (
           <LoadingSpinner message="cargando tu entrenamiento..." />
@@ -133,109 +165,92 @@ export function MemberDashboardScreen({ navigation }) {
               </View>
             </View>
 
-            {/* 2. RUTINA PROTAGONISTA (HERO CARD) */}
-            {primaryRoutine ? (
-              <View style={styles.heroSection}>
-                <View style={styles.sectionHeaderRow}>
-                  <Text style={[styles.sectionHeading, { color: colors.text }]}>
-                    RUTINA PRINCIPAL
-                  </Text>
-                  <View style={[styles.activePill, { backgroundColor: 'rgba(57, 255, 20, 0.12)', borderColor: colors.primary }]}>
-                    <Text style={[styles.activePillText, { color: colors.primary }]}>● EN CURSO</Text>
-                  </View>
-                </View>
-
-                <Card style={[styles.heroCard, { borderColor: colors.primary }]}>
-                  <View style={styles.heroCardHeader}>
-                    <View style={styles.heroBadgeBox}>
-                      <Text style={[styles.heroBadgeText, { color: colors.primary }]}>PLAN ACTIVO</Text>
-                    </View>
-                    {primaryRoutine.trainer_name ? (
-                      <Text style={[styles.heroTrainerTag, { color: colors.textSecondary }]}>
-                        Prof. {primaryRoutine.trainer_name}
-                      </Text>
-                    ) : null}
-                  </View>
-
-                  <Text style={[styles.heroRoutineName, { color: colors.text }]}>
-                    {primaryRoutine.name}
-                  </Text>
-
-                  {primaryRoutine.description ? (
-                    <Text style={[styles.heroRoutineDesc, { color: colors.textSecondary }]}>
-                      {primaryRoutine.description}
-                    </Text>
-                  ) : null}
-
-                  {/* Fila de metadatos del plan */}
-                  <View style={[styles.heroMetaRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                    <View style={styles.heroMetaCol}>
-                      <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>ENTRENADOR</Text>
-                      <Text style={[styles.heroMetaVal, { color: colors.text }]}>
-                        {primaryRoutine.trainer_name || 'Staff FitManager'}
-                      </Text>
-                    </View>
-                    <View style={styles.heroMetaColRight}>
-                      <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>EJERCICIOS</Text>
-                      <Text style={[styles.heroMetaVal, { color: colors.primary }]}>
-                        {Array.isArray(primaryRoutine.exercises) ? `${primaryRoutine.exercises.length} asignados` : 'Ver detalle'}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <Button
-                    title="INICIAR ENTRENAMIENTO AHORA"
-                    variant="primary"
-                    onPress={() => navigation.navigate('RoutineDetail', { routineId: primaryRoutine.id })}
-                    style={styles.heroActionBtn}
-                  />
-                </Card>
+            {/* 2. SECCIÓN UNIFICADA DE RUTINAS */}
+            <View style={styles.heroSection}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={[styles.sectionHeading, { color: colors.text }]}>
+                  RUTINAS ({routines.length})
+                </Text>
               </View>
-            ) : (
-              <EmptyState
-                title="sin rutinas asignadas"
-                description="tu entrenador aún no te asignó una rutina activa. consultá periódicamente para ver tus ejercicios."
-              />
-            )}
 
-            {/* 3. RUTINAS ADICIONALES (SI TIENE MÁS DE UNA) */}
-            {secondaryRoutines.length > 0 && (
-              <View style={styles.secondarySection}>
-                <View style={styles.sectionHeaderRow}>
-                  <Text style={[styles.sectionHeading, { color: colors.text }]}>
-                    OTRAS RUTINAS DISPONIBLES ({secondaryRoutines.length})
-                  </Text>
-                </View>
-
-                {secondaryRoutines.map((routine, idx) => (
-                  <Card key={String(routine.id)} style={styles.secondaryCard}>
-                    <View style={styles.secondaryHeaderRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.secondaryRoutineTag, { color: colors.primary }]}>
-                          OPCIÓN #{idx + 2}
-                        </Text>
-                        <Text style={[styles.secondaryRoutineName, { color: colors.text }]}>
-                          {routine.name}
-                        </Text>
+              {routines.length > 0 ? (
+                routines.map((routine, idx) => {
+                  const hasActive = Boolean(activeSessionsByRoutine[routine.id]);
+                  return (
+                    <Card
+                      key={String(routine.id)}
+                      style={[
+                        styles.routineCardUnified,
+                        hasActive && { borderColor: colors.primary, borderWidth: 1.5 }
+                      ]}
+                    >
+                      <View style={styles.heroCardHeader}>
+                        <View
+                          style={[
+                            styles.heroBadgeBox,
+                            hasActive
+                              ? { backgroundColor: 'rgba(57, 255, 20, 0.15)' }
+                              : { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.heroBadgeText,
+                              { color: hasActive ? colors.primary : colors.textMuted }
+                            ]}
+                          >
+                            {hasActive ? '● EN CURSO' : `RUTINA #${idx + 1}`}
+                          </Text>
+                        </View>
+                        {routine.trainer_name ? (
+                          <Text style={[styles.heroTrainerTag, { color: colors.textSecondary }]}>
+                            Prof. {routine.trainer_name}
+                          </Text>
+                        ) : null}
                       </View>
-                    </View>
 
-                    {routine.description ? (
-                      <Text style={[styles.secondaryRoutineDesc, { color: colors.textSecondary }]}>
-                        {routine.description}
+                      <Text style={[styles.heroRoutineName, { color: colors.text }]}>
+                        {routine.name}
                       </Text>
-                    ) : null}
 
-                    <Button
-                      title="VER Y ENTRENAR ESTA RUTINA"
-                      variant="secondary"
-                      onPress={() => navigation.navigate('RoutineDetail', { routineId: routine.id })}
-                      style={styles.secondaryBtn}
-                    />
-                  </Card>
-                ))}
-              </View>
-            )}
+                      {routine.description ? (
+                        <Text style={[styles.heroRoutineDesc, { color: colors.textSecondary }]}>
+                          {routine.description}
+                        </Text>
+                      ) : null}
+
+                      {/* Fila de metadatos del plan */}
+                      <View style={[styles.heroMetaRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                        <View style={styles.heroMetaCol}>
+                          <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>ENTRENADOR</Text>
+                          <Text style={[styles.heroMetaVal, { color: colors.text }]}>
+                            {routine.trainer_name || 'Staff FitManager'}
+                          </Text>
+                        </View>
+                        <View style={styles.heroMetaColRight}>
+                          <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>EJERCICIOS</Text>
+                          <Text style={[styles.heroMetaVal, { color: colors.primary }]}>
+                            {Array.isArray(routine.exercises) ? `${routine.exercises.length} asignados` : 'Ver detalle'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Button
+                        title={hasActive ? 'CONTINUAR ENTRENAMIENTO' : 'INICIAR ENTRENAMIENTO AHORA'}
+                        variant={hasActive ? 'primary' : 'primary'}
+                        onPress={() => navigation.navigate('RoutineDetail', { routineId: routine.id })}
+                        style={styles.heroActionBtn}
+                      />
+                    </Card>
+                  );
+                })
+              ) : (
+                <EmptyState
+                  title="sin rutinas asignadas"
+                  description="tu entrenador aún no te asignó una rutina activa. consultá periódicamente para ver tus ejercicios."
+                />
+              )}
+            </View>
 
             {/* 4. GRILLA DE ACCESOS RÁPIDOS INTEGRADOS */}
             <View style={styles.quickAccessSection}>
@@ -305,6 +320,9 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1
+  },
+  headerContainer: {
+    paddingHorizontal: 16
   },
   scrollArea: {
     flex: 1
@@ -438,6 +456,11 @@ const styles = StyleSheet.create({
   },
   heroActionBtn: {
     marginTop: 2
+  },
+  routineCardUnified: {
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 14
   },
   secondarySection: {
     marginBottom: 20

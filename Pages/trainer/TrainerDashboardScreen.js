@@ -51,6 +51,9 @@ export function TrainerDashboardScreen({ navigation }) {
   const [selectedMemberIds, setSelectedMemberIds] = useState([]); // array de user_ids
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
 
+  // busqueda en biblioteca de ejercicios
+  const [exerciseSearchQuery, setExerciseSearchQuery] = useState('');
+
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState(null);
 
@@ -112,6 +115,15 @@ export function TrainerDashboardScreen({ navigation }) {
     );
   }, [availableMembers, memberSearchQuery]);
 
+  // filtrar biblioteca de ejercicios segun busqueda en tiempo real
+  const filteredExercisesLibrary = useMemo(() => {
+    if (!exerciseSearchQuery.trim()) return exercisesLibrary;
+    const q = exerciseSearchQuery.toLowerCase().trim();
+    return exercisesLibrary.filter(ex =>
+      ex.name && ex.name.toLowerCase().includes(q)
+    );
+  }, [exercisesLibrary, exerciseSearchQuery]);
+
   // abrir modal para crear nueva rutina
   const handleOpenCreate = () => {
     setEditingRoutine(null);
@@ -119,6 +131,7 @@ export function TrainerDashboardScreen({ navigation }) {
     setFormDesc('');
     setSelectedMemberIds([]);
     setMemberSearchQuery('');
+    setExerciseSearchQuery('');
     setSelectedExercises([]);
     setFormError(null);
     setModalVisible(true);
@@ -137,6 +150,7 @@ export function TrainerDashboardScreen({ navigation }) {
     
     setSelectedMemberIds(currentAssignedIds);
     setMemberSearchQuery('');
+    setExerciseSearchQuery('');
     setFormError(null);
     setModalVisible(true);
 
@@ -681,39 +695,54 @@ export function TrainerDashboardScreen({ navigation }) {
                       no hay ejercicios en la biblioteca. creá uno primero desde el panel.
                     </Text>
                   ) : (
-                    <View style={styles.libraryPicker}>
-                      {exercisesLibrary.map((ex) => {
-                        const isAlreadyAdded = selectedExercises.some((s) => s.exercise_id === ex.id);
-                        return (
-                          <TouchableOpacity
-                            key={String(ex.id)}
-                            onPress={() => handleAddExerciseToRoutine(ex)}
-                            disabled={isAlreadyAdded}
-                            style={[
-                              styles.pickItemBtn,
-                              {
-                                borderColor: isAlreadyAdded ? colors.primary : colors.border,
-                                backgroundColor: isAlreadyAdded ? 'rgba(57, 255, 20, 0.1)' : colors.surface
-                              }
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.pickItemText,
-                                { color: isAlreadyAdded ? colors.primary : colors.text }
-                              ]}
-                            >
-                              {isAlreadyAdded ? `✓ ${ex.name}` : `+ ${ex.name}`}
-                            </Text>
-                            {ex.muscle_group ? (
-                              <Text style={[styles.pickItemSub, { color: colors.textMuted }]}>
-                                {ex.muscle_group}
-                              </Text>
-                            ) : null}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
+                    <>
+                      <Input
+                        placeholder="Buscar ejercicio por nombre..."
+                        value={exerciseSearchQuery}
+                        onChangeText={setExerciseSearchQuery}
+                        style={{ marginVertical: 4 }}
+                      />
+
+                      {filteredExercisesLibrary.length === 0 ? (
+                        <Text style={[styles.placeholderText, { color: colors.textMuted, marginTop: 8 }]}>
+                          No se encontraron ejercicios
+                        </Text>
+                      ) : (
+                        <View style={styles.libraryPicker}>
+                          {filteredExercisesLibrary.map((ex) => {
+                            const isAlreadyAdded = selectedExercises.some((s) => s.exercise_id === ex.id);
+                            return (
+                              <TouchableOpacity
+                                key={String(ex.id)}
+                                onPress={() => handleAddExerciseToRoutine(ex)}
+                                disabled={isAlreadyAdded}
+                                style={[
+                                  styles.pickItemBtn,
+                                  {
+                                    borderColor: isAlreadyAdded ? colors.primary : colors.border,
+                                    backgroundColor: isAlreadyAdded ? 'rgba(57, 255, 20, 0.1)' : colors.surface
+                                  }
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.pickItemText,
+                                    { color: isAlreadyAdded ? colors.primary : colors.text }
+                                  ]}
+                                >
+                                  {isAlreadyAdded ? `✓ ${ex.name}` : `+ ${ex.name}`}
+                                </Text>
+                                {ex.muscle_group ? (
+                                  <Text style={[styles.pickItemSub, { color: colors.textMuted }]}>
+                                    {ex.muscle_group}
+                                  </Text>
+                                ) : null}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </>
                   )}
                 </View>
 
