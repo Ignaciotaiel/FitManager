@@ -9,7 +9,10 @@ import {
   oauthGoogle,
   verifyGoogleAuth,
   oauthGithub,
-  oauthDiscord
+  oauthDiscord,
+  forgotPassword,
+  verifyResetCode,
+  resetPassword
 } from '../controllers/authController.js';
 import { verifyToken } from '../middlewares/authMiddleware.js';
 
@@ -20,6 +23,11 @@ router.post('/register', register);
 router.post('/login', login);
 router.post('/verify-email', verifyEmail);
 router.post('/resend-verification', resendVerificationCode);
+
+// rutas publicas de recuperacion de contrasena
+router.post('/forgot-password', forgotPassword);
+router.post('/verify-reset-code', verifyResetCode);
+router.post('/reset-password', resetPassword);
 
 // inicializacion protegida del primer administrador (requiere SETUP_ADMIN_KEY estricta)
 router.post('/setup-admin', setupFirstAdmin);

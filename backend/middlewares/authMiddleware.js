@@ -34,7 +34,7 @@ export async function verifyToken(req, res, next) {
   // consultar la base de datos para verificar que el usuario exista y este activo
   try {
     const [rows] = await pool.execute(
-      'SELECT id, name, email, role, is_active FROM users WHERE id = ? LIMIT 1',
+      'SELECT id, name, email, role, is_active, token_version FROM users WHERE id = ? LIMIT 1',
       [decoded.id]
     );
 
@@ -57,6 +57,27 @@ export async function verifyToken(req, res, next) {
         error: {
           message: 'la cuenta se encuentra desactivada',
           code: 'ACCOUNT_INACTIVE'
+        }
+      });
+    }
+
+    // Validación estricta de token_version (invalidación de sesiones previas)
+    // Conversión explícita a números enteros para prevenir falsos rechazos si el driver entrega strings
+    const tokenVersionJwt = Number(decoded.token_version);
+    const tokenVersionDb = Number(user.token_version);
+
+    if (
+      decoded.token_version === undefined ||
+      decoded.token_version === null ||
+      !Number.isInteger(tokenVersionJwt) ||
+      !Number.isInteger(tokenVersionDb) ||
+      tokenVersionJwt !== tokenVersionDb
+    ) {
+      return res.status(401).json({
+        ok: false,
+        error: {
+          message: 'sesion revocada o expirada por cambio de seguridad. por favor inicia sesion nuevamente',
+          code: 'SESSION_REVOKED'
         }
       });
     }
