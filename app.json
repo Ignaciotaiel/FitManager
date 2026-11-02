@@ -26,7 +26,8 @@
     "plugins": [
       "expo-secure-store",
       "@react-native-google-signin/google-signin",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

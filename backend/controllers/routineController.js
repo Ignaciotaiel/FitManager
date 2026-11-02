@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { logActivity } from '../services/activityLogService.js';
 
 // Helper para saber si routine_assignments existe físicamente en MariaDB
 let hasAssignmentsTableCache = null;
@@ -420,6 +421,8 @@ export async function createRoutine(req, res, next) {
 
     await connection.commit();
 
+    await logActivity({ userId: req.user?.id, actionType: 'CREATE_ROUTINE', category: 'routines', description: `Creación de rutina: "${cleanName}"`, metadata: { routineId } });
+
     return res.status(201).json({
       ok: true,
       message: 'rutina creada exitosamente',
@@ -637,6 +640,8 @@ export async function updateRoutine(req, res, next) {
     }
 
     await connection.commit();
+
+    await logActivity({ userId: req.user?.id, actionType: 'UPDATE_ROUTINE', category: 'routines', description: `Actualización de rutina ID ${routineId}`, metadata: { routineId } });
 
     return res.status(200).json({
       ok: true,
@@ -883,6 +888,8 @@ export async function deleteRoutine(req, res, next) {
     await connection.execute('DELETE FROM routines WHERE id = ?', [routineId]);
 
     await connection.commit();
+
+    await logActivity({ userId: req.user?.id, actionType: 'DELETE_ROUTINE', category: 'routines', description: `Eliminación de rutina ID ${routineId}`, metadata: { routineId } });
 
     return res.status(200).json({
       ok: true,

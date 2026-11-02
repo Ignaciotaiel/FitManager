@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { logActivity } from '../services/activityLogService.js';
 
 // valores permitidos para el enum difficulty en la base de datos
 const ALLOWED_DIFFICULTIES = ['beginner', 'intermediate', 'advanced'];
@@ -129,6 +130,8 @@ export async function createExercise(req, res, next) {
       [cleanName, cleanDesc, cleanMuscle, cleanDifficulty]
     );
 
+    await logActivity({ userId: req.user?.id, actionType: 'CREATE_EXERCISE', category: 'exercises', description: `Creación de ejercicio: "${cleanName}"`, metadata: { exerciseId: result.insertId } });
+
     return res.status(201).json({
       ok: true,
       message: 'ejercicio creado exitosamente',
@@ -206,6 +209,8 @@ export async function updateExercise(req, res, next) {
       [newName, newDesc, newMuscle, newDifficulty, exerciseId]
     );
 
+    await logActivity({ userId: req.user?.id, actionType: 'UPDATE_EXERCISE', category: 'exercises', description: `Actualización de ejercicio ID ${exerciseId}: "${newName}"`, metadata: { exerciseId } });
+
     return res.status(200).json({
       ok: true,
       message: 'ejercicio actualizado exitosamente',
@@ -274,6 +279,7 @@ export async function deleteExercise(req, res, next) {
       // Si el modelo tiene la columna is_active, permitimos baja lógica (archivado)
       if (hasIsActive) {
         await pool.execute('UPDATE exercises SET is_active = 0 WHERE id = ?', [exerciseId]);
+        await logActivity({ userId: req.user?.id, actionType: 'ARCHIVE_EXERCISE', category: 'exercises', description: `Archivado de ejercicio ID ${exerciseId}`, metadata: { exerciseId } });
         return res.status(200).json({
           ok: true,
           message: 'el ejercicio fue archivado y ocultado de la biblioteca; sus registros en rutinas e historiales permanecen intactos',
@@ -294,6 +300,7 @@ export async function deleteExercise(req, res, next) {
     if (hasLoggedSets) {
       if (hasIsActive) {
         await pool.execute('UPDATE exercises SET is_active = 0 WHERE id = ?', [exerciseId]);
+        await logActivity({ userId: req.user?.id, actionType: 'ARCHIVE_EXERCISE', category: 'exercises', description: `Archivado de ejercicio ID ${exerciseId}`, metadata: { exerciseId } });
         return res.status(200).json({
           ok: true,
           message: 'el ejercicio fue archivado; su historial de pesos y series previas permanece preservado',
@@ -312,6 +319,8 @@ export async function deleteExercise(req, res, next) {
 
     // Eliminación física segura: no tiene rutinas ni historiales vinculados
     await pool.execute('DELETE FROM exercises WHERE id = ?', [exerciseId]);
+
+    await logActivity({ userId: req.user?.id, actionType: 'DELETE_EXERCISE', category: 'exercises', description: `Eliminación de ejercicio ID ${exerciseId}`, metadata: { exerciseId } });
 
     return res.status(200).json({
       ok: true,

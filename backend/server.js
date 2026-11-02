@@ -7,6 +7,7 @@ import userRoutes from './routes/userRoutes.js';
 import exerciseRoutes from './routes/exerciseRoutes.js';
 import routineRoutes from './routes/routineRoutes.js';
 import workoutRoutes from './routes/workoutRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorMiddleware.js';
 
 // cargar variables de entorno locales
@@ -59,6 +60,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/exercises', exerciseRoutes);
 app.use('/api/routines', routineRoutes);
 app.use('/api/workouts', workoutRoutes);
+app.use('/api/admin', adminRoutes);
 
 // manejadores de ruta no encontrada y errores
 app.use(notFoundHandler);

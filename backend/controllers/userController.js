@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { logActivity } from '../services/activityLogService.js';
 import { isValidEmail, isValidRole } from '../middlewares/validate.js';
 
 // listar usuarios (admin ve todos; trainer ve socios activos disponibles para asignar)
@@ -93,6 +94,8 @@ export async function updateUserRoleOrStatus(req, res, next) {
       'UPDATE users SET role = ?, is_active = ? WHERE id = ?',
       [newRole, newStatus, id]
     );
+
+    await logActivity({ userId: req.user?.id, actionType: 'UPDATE_USER', category: 'users', description: `Actualización de usuario ID ${id}: rol ${current.role} → ${newRole}, activo ${current.is_active} → ${newStatus}`, metadata: { targetUserId: Number(id), role: newRole, is_active: newStatus } });
 
     return res.status(200).json({
       ok: true,
