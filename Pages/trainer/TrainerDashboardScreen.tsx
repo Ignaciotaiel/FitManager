@@ -13,7 +13,9 @@ import {
   ScrollView
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { routineService } from '../../Modules/routines/routineService';
 import { exerciseService } from '../../Modules/exercises/exerciseService';
@@ -26,7 +28,8 @@ import {
   StatusBanner,
   LoadingSpinner,
   EmptyState,
-  ConfirmModal
+  ConfirmModal,
+  MemberPickerModal
 } from '../../Modules/components/index';
 
 export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashboard'>) {
@@ -50,7 +53,9 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
   
   // asignaciones multiples de socios
   const [selectedMemberIds, setSelectedMemberIds] = useState<any[]>([]); // array de user_ids
-  const [memberSearchQuery, setMemberSearchQuery] = useState('');
+  const [memberPickerVisible, setMemberPickerVisible] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
 
   // busqueda en biblioteca de ejercicios
   const [exerciseSearchQuery, setExerciseSearchQuery] = useState('');
@@ -82,8 +87,13 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
         setExercisesLibrary(exercisesRes.data.exercises);
       }
       if (usersRes?.ok && Array.isArray(usersRes?.data?.users)) {
-        // filtrar solo socios
-        setAvailableMembers(usersRes.data.users.filter(u => u.role === 'member'));
+        // filtrar solo socios activos (el backend rechaza asignar rutinas a socios inactivos)
+        setAvailableMembers(
+          usersRes.data.users.filter(
+            u => u.role === 'member' && (u.is_active === 1 || u.is_active === true)
+          )
+        );
+        setMembersError(null);
       }
     } catch (error) {
       if (error.code === 'NETWORK_ERROR') {
@@ -97,6 +107,25 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     }
   }, [token]);
 
+  const reloadMembers = useCallback(async () => {
+    try {
+      setMembersLoading(true);
+      setMembersError(null);
+      const usersRes = await userService.getUsers(token);
+      if (usersRes?.ok && Array.isArray(usersRes?.data?.users)) {
+        setAvailableMembers(
+          usersRes.data.users.filter(
+            u => u.role === 'member' && (u.is_active === 1 || u.is_active === true)
+          )
+        );
+      }
+    } catch (err: any) {
+      setMembersError(err?.message || 'no se pudieron cargar los socios disponibles');
+    } finally {
+      setMembersLoading(false);
+    }
+  }, [token]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -106,15 +135,11 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     loadData();
   };
 
-  // filtrar lista de socios segun busqueda
-  const filteredMembers = useMemo(() => {
-    if (!memberSearchQuery.trim()) return availableMembers;
-    const q = memberSearchQuery.toLowerCase().trim();
-    return availableMembers.filter(m =>
-      (m.name && m.name.toLowerCase().includes(q)) ||
-      (m.email && m.email.toLowerCase().includes(q))
-    );
-  }, [availableMembers, memberSearchQuery]);
+  // lista de objetos socio seleccionados para mostrar chips de resumen
+  const selectedMembersList = useMemo(() => {
+    const normalizedIds = selectedMemberIds.map(Number);
+    return availableMembers.filter(m => normalizedIds.includes(Number(m.id)));
+  }, [availableMembers, selectedMemberIds]);
 
   // filtrar biblioteca de ejercicios segun busqueda en tiempo real
   const filteredExercisesLibrary = useMemo(() => {
@@ -131,7 +156,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     setFormName('');
     setFormDesc('');
     setSelectedMemberIds([]);
-    setMemberSearchQuery('');
+    setMemberPickerVisible(false);
     setExerciseSearchQuery('');
     setSelectedExercises([]);
     setFormError(null);
@@ -150,7 +175,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
       : (routine.member_id ? [Number(routine.member_id)] : []);
     
     setSelectedMemberIds(currentAssignedIds);
-    setMemberSearchQuery('');
+    setMemberPickerVisible(false);
     setExerciseSearchQuery('');
     setFormError(null);
     setModalVisible(true);
@@ -190,11 +215,13 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
 
   // toggle seleccion de socio
   const toggleMemberSelection = (memberId) => {
+    const numericId = Number(memberId);
     setSelectedMemberIds(prev => {
-      if (prev.includes(memberId)) {
-        return prev.filter(id => id !== memberId);
+      const normalized = prev.map(Number);
+      if (normalized.includes(numericId)) {
+        return normalized.filter(id => id !== numericId);
       } else {
-        return [...prev, memberId];
+        return [...normalized, numericId];
       }
     });
   };
@@ -529,104 +556,150 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
           visible={modalVisible}
           transparent
           animationType="slide"
-          onRequestClose={() => setModalVisible(false)}
+          onRequestClose={() => {
+            if (memberPickerVisible) {
+              setMemberPickerVisible(false);
+            } else {
+              setModalVisible(false);
+            }
+          }}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={[styles.modalBackdrop, { backgroundColor: colors.overlay }]}
           >
             <View style={[styles.modalContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <ScrollView contentContainerStyle={styles.modalScroll}>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>
-                  {editingRoutine ? 'EDITAR RUTINA' : 'CREAR NUEVA RUTINA'}
-                </Text>
-                <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
-                  {editingRoutine
-                    ? 'modificá el nombre, descripción o asigná varios socios'
-                    : 'diagramá el plan seleccionando ejercicios y asigná socios'}
-                </Text>
-
-                {formError && <StatusBanner message={formError} type="error" />}
-
-                <Input
-                  label="nombre de la rutina"
-                  placeholder="ej. hipertrofia pecho y tríceps"
-                  value={formName}
-                  onChangeText={setFormName}
+              {memberPickerVisible ? (
+                <MemberPickerModal
+                  inline
+                  visible={memberPickerVisible}
+                  members={availableMembers}
+                  selectedIds={selectedMemberIds}
+                  onToggle={toggleMemberSelection}
+                  onClear={() => setSelectedMemberIds([])}
+                  onClose={() => setMemberPickerVisible(false)}
+                  loading={membersLoading}
+                  error={membersError}
+                  onRetry={reloadMembers}
                 />
+              ) : (
+                <ScrollView
+                  contentContainerStyle={styles.modalScroll}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>
+                    {editingRoutine ? 'EDITAR RUTINA' : 'CREAR NUEVA RUTINA'}
+                  </Text>
+                  <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+                    {editingRoutine
+                      ? 'modificá el nombre, descripción o asigná varios socios'
+                      : 'diagramá el plan seleccionando ejercicios y asigná socios'}
+                  </Text>
 
-                <Input
-                  label="descripción o instrucciones"
-                  placeholder="ej. descansar 90 segundos entre series pesadas"
-                  value={formDesc}
-                  onChangeText={setFormDesc}
-                  multiline
-                  numberOfLines={3}
-                />
-
-                {/* SECCION ASIGNAR USUARIOS MULTIPLES */}
-                <View style={styles.assignmentSection}>
-                  <View style={styles.assignmentHeader}>
-                    <Text style={[styles.subSectionTitle, { color: colors.text }]}>
-                      ASIGNAR SOCIOS ({selectedMemberIds.length} seleccionados)
-                    </Text>
-                    {selectedMemberIds.length > 0 && (
-                      <TouchableOpacity onPress={() => setSelectedMemberIds([])}>
-                        <Text style={[styles.clearText, { color: colors.danger }]}>DESMARCAR TODOS</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                  {formError && <StatusBanner message={formError} type="error" />}
 
                   <Input
-                    placeholder="buscar socio por nombre o correo..."
-                    value={memberSearchQuery}
-                    onChangeText={setMemberSearchQuery}
-                    style={{ marginVertical: 4 }}
+                    label="nombre de la rutina"
+                    placeholder="ej. hipertrofia pecho y tríceps"
+                    value={formName}
+                    onChangeText={setFormName}
                   />
 
-                  <View style={[styles.membersListContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-                    {availableMembers.length === 0 ? (
-                      <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
-                        no hay socios registrados disponibles.
+                  <Input
+                    label="descripción o instrucciones"
+                    placeholder="ej. descansar 90 segundos entre series pesadas"
+                    value={formDesc}
+                    onChangeText={setFormDesc}
+                    multiline
+                    numberOfLines={3}
+                  />
+
+                  {/* SECCION ASIGNAR USUARIOS MULTIPLES (abre en panel dedicado sin invadir ejercicios) */}
+                  <View style={styles.assignmentSection}>
+                    <View style={styles.assignmentHeader}>
+                      <Text style={[styles.subSectionTitle, { color: colors.text }]}>
+                        ASIGNAR SOCIOS ({selectedMemberIds.length} seleccionados)
                       </Text>
-                    ) : filteredMembers.length === 0 ? (
-                      <Text style={[styles.placeholderText, { color: colors.textMuted }]}>
-                        no se encontraron socios con esa búsqueda.
-                      </Text>
-                    ) : (
-                      filteredMembers.map(m => {
-                        const isSelected = selectedMemberIds.includes(m.id);
-                        return (
-                          <TouchableOpacity
-                            key={String(m.id)}
-                            onPress={() => toggleMemberSelection(m.id)}
+                      {selectedMemberIds.length > 0 && (
+                        <TouchableOpacity onPress={() => setSelectedMemberIds([])}>
+                          <Text style={[styles.clearText, { color: colors.danger }]}>DESMARCAR TODOS</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={() => setMemberPickerVisible(true)}
+                      activeOpacity={0.85}
+                      style={[
+                        styles.memberPickerTrigger,
+                        {
+                          borderColor: selectedMemberIds.length > 0 ? colors.primary : colors.border,
+                          backgroundColor: colors.surface
+                        }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="abrir selector de socios"
+                    >
+                      <View style={styles.memberPickerTriggerLeft}>
+                        <View
+                          style={[
+                            styles.memberPickerIconWrap,
+                            { backgroundColor: withAlpha(colors.primary, 0.14) }
+                          ]}
+                        >
+                          <Ionicons name="people-outline" size={18} color={colors.primary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.memberPickerTriggerTitle, { color: colors.text }]}>
+                            {selectedMemberIds.length === 0
+                              ? 'Seleccionar socios para esta rutina'
+                              : `${selectedMemberIds.length} ${selectedMemberIds.length === 1 ? 'socio seleccionado' : 'socios seleccionados'}`}
+                          </Text>
+                          <Text style={[styles.memberPickerTriggerSub, { color: colors.textSecondary }]}>
+                            tocá para buscar por nombre o correo ({availableMembers.length} disponibles)
+                          </Text>
+                        </View>
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                    </TouchableOpacity>
+
+                    {selectedMembersList.length > 0 && (
+                      <View
+                        style={[
+                          styles.selectedMembersChipsWrap,
+                          { borderColor: colors.border, backgroundColor: colors.surface }
+                        ]}
+                      >
+                        {selectedMembersList.map((member) => (
+                          <View
+                            key={String(member.id)}
                             style={[
-                              styles.memberItemRow,
+                              styles.memberChip,
                               {
-                                borderColor: isSelected ? colors.primary : colors.border,
-                                backgroundColor: isSelected ? 'rgba(57, 255, 20, 0.08)' : 'transparent'
+                                borderColor: colors.primary,
+                                backgroundColor: withAlpha(colors.primary, 0.12)
                               }
                             ]}
                           >
-                            <View style={styles.checkboxCol}>
-                              <Text style={[styles.checkboxText, { color: isSelected ? colors.primary : colors.textMuted }]}>
-                                {isSelected ? '☑' : '☐'}
-                              </Text>
-                            </View>
-                            <View style={styles.memberInfoCol}>
-                              <Text style={[styles.memberNameText, { color: colors.text }]}>
-                                {m.name}
-                              </Text>
-                              <Text style={[styles.memberEmailText, { color: colors.textSecondary }]}>
-                                {m.email}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })
+                            <Text
+                              style={[styles.memberChipText, { color: colors.text }]}
+                              numberOfLines={1}
+                            >
+                              {member.name || member.email}
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => toggleMemberSelection(member.id)}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                              accessibilityLabel={`quitar a ${member.name || member.email}`}
+                            >
+                              <Ionicons name="close-circle" size={16} color={colors.primary} />
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
                     )}
                   </View>
-                </View>
 
                 {/* selector de ejercicios para creacion y edicion */}
                 <View style={styles.exerciseSelectorSection}>
@@ -772,6 +845,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
                   />
                 </View>
               </ScrollView>
+              )}
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -1006,39 +1080,62 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800'
   },
-  membersListContainer: {
-    maxHeight: 180,
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 6,
-    marginTop: 4
-  },
-  memberItemRow: {
+  memberPickerTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    justifyContent: 'space-between',
     borderWidth: 1,
-    marginVertical: 2
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginTop: 4,
+    gap: 10
   },
-  checkboxCol: {
-    marginRight: 10
+  memberPickerTriggerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10
   },
-  checkboxText: {
-    fontSize: 18,
-    fontWeight: '900'
+  memberPickerIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center'
   },
-  memberInfoCol: {
-    flex: 1
-  },
-  memberNameText: {
+  memberPickerTriggerTitle: {
     fontSize: 13,
     fontWeight: '800'
   },
-  memberEmailText: {
+  memberPickerTriggerSub: {
     fontSize: 11,
-    marginTop: 1
+    marginTop: 2
+  },
+  selectedMembersChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    padding: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden'
+  },
+  memberChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    maxWidth: '100%'
+  },
+  memberChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    flexShrink: 1
   },
   exerciseSelectorSection: {
     marginVertical: 10

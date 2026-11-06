@@ -5,6 +5,7 @@ import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
 import { useAuth } from '../../contexto/authContext';
 import { adminService } from '../../Modules/admin/adminService';
+import { formatDateTimeAR } from '../../Modules/utils/dateFormat';
 import type { AdminNotification, NotificationTarget } from '../../Modules/types';
 import {
   Card,
@@ -29,13 +30,6 @@ const TARGET_LABELS: Record<NotificationTarget, string> = {
   trainer: 'SOLO ENTRENADORES',
   member: 'SOLO SOCIOS'
 };
-
-function formatDateTime(value?: string): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('es-AR');
-}
 
 export function NotificationsScreen({ navigation }: ScreenProps<'Notifications'>) {
   const { colors } = useTheme();
@@ -231,7 +225,7 @@ export function NotificationsScreen({ navigation }: ScreenProps<'Notifications'>
                   </View>
                   <Text style={[styles.itemContent, { color: colors.textSecondary }]}>{item.content}</Text>
                   <Text style={[styles.meta, { color: colors.textMuted }]}>
-                    {TARGET_LABELS[item.target_role] || item.target_role} · publicada {formatDateTime(item.created_at)}
+                    {TARGET_LABELS[item.target_role] || item.target_role} · publicada {formatDateTimeAR(item.created_at)}
                     {item.created_by_name ? ` por ${item.created_by_name}` : ''}
                   </Text>
                   <View style={styles.buttonRow}>

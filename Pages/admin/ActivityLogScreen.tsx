@@ -1,22 +1,37 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  RefreshControl,
+  TouchableOpacity
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { adminService } from '../../Modules/admin/adminService';
 import { userService } from '../../Modules/users/userService';
+import {
+  isoToDisplay,
+  formatDateTimeAR,
+  describePeriod
+} from '../../Modules/utils/dateFormat';
 import type { ActivityLog, User } from '../../Modules/types';
 import {
   Card,
-  Input,
   Button,
   StatusBanner,
   LoadingSpinner,
   EmptyState,
   ScreenTopBar,
-  FilterChips
+  FilterChips,
+  DateRangeCalendarModal
 } from '../../Modules/components/index';
+import type { CalendarTarget } from '../../Modules/components/DateRangeCalendarModal';
 
 const CATEGORY_OPTIONS = [
   { value: null as string | null, label: 'TODAS' },
@@ -26,14 +41,6 @@ const CATEGORY_OPTIONS = [
   { value: 'incidents', label: 'INCIDENCIAS' },
   { value: 'notifications', label: 'NOTIFICACIONES' }
 ];
-
-const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('es-AR');
-}
 
 export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
   const { colors } = useTheme();
@@ -45,12 +52,15 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // filtros editables y filtros aplicados
+  // filtros por usuario, categoria y rango de fechas (almacenadas en ISO AAAA-MM-DD para el backend y mostradas en DD-MM-AAAA)
   const [userFilter, setUserFilter] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
-  const [appliedDates, setAppliedDates] = useState<{ start: string; end: string }>({ start: '', end: '' });
+
+  // estado del calendario visual
+  const [calendarVisible, setCalendarVisible] = useState<boolean>(false);
+  const [calendarTarget, setCalendarTarget] = useState<CalendarTarget>('start');
 
   const loadLogs = useCallback(async () => {
     try {
@@ -59,8 +69,8 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
         {
           userId: userFilter,
           category: categoryFilter,
-          startDate: appliedDates.start || null,
-          endDate: appliedDates.end || null,
+          startDate: startDate || null,
+          endDate: endDate || null,
           limit: 100
         },
         token
@@ -72,7 +82,7 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [token, userFilter, categoryFilter, appliedDates]);
+  }, [token, userFilter, categoryFilter, startDate, endDate]);
 
   // listado de usuarios para el filtro por usuario
   useEffect(() => {
@@ -92,25 +102,37 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
     loadLogs();
   }, [loadLogs]);
 
-  const applyDates = () => {
-    if ((startDate && !DATE_REGEX.test(startDate)) || (endDate && !DATE_REGEX.test(endDate))) {
-      setErrorMessage('las fechas deben tener el formato AAAA-MM-DD (ej. 2026-11-02)');
+  const openCalendar = (target: CalendarTarget) => {
+    setCalendarTarget(target);
+    setCalendarVisible(true);
+  };
+
+  const handleConfirmDates = (range: { startDate: string; endDate: string }) => {
+    if (range.startDate && range.endDate && range.endDate < range.startDate) {
+      setErrorMessage('la fecha final no puede ser anterior a la fecha inicial');
       return;
     }
-    if (startDate && endDate && startDate > endDate) {
-      setErrorMessage('la fecha inicial no puede ser posterior a la fecha final');
-      return;
-    }
-    setAppliedDates({ start: startDate, end: endDate });
+    setErrorMessage(null);
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+    setCalendarVisible(false);
+  };
+
+  const clearDatesOnly = () => {
+    setErrorMessage(null);
+    setStartDate('');
+    setEndDate('');
   };
 
   const clearFilters = () => {
+    setErrorMessage(null);
     setUserFilter(null);
     setCategoryFilter(null);
     setStartDate('');
     setEndDate('');
-    setAppliedDates({ start: '', end: '' });
   };
+
+  const hasActiveFilters = Boolean(userFilter !== null || categoryFilter !== null || startDate || endDate);
 
   const userOptions = [
     { value: null as number | null, label: 'TODOS' },
@@ -118,8 +140,9 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
   ];
 
   const header = (
-    <View>
+    <View style={styles.headerContainer}>
       {errorMessage ? <StatusBanner message={errorMessage} type="error" /> : null}
+
       <FilterChips label="usuario" options={userOptions} value={userFilter} onChange={setUserFilter} />
       <FilterChips
         label="categoría"
@@ -127,27 +150,127 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
         value={categoryFilter}
         onChange={setCategoryFilter}
       />
-      <View style={styles.dateRow}>
-        <Input
-          label="desde"
-          placeholder="AAAA-MM-DD"
-          value={startDate}
-          onChangeText={setStartDate}
-          style={styles.dateInput}
-          maxLength={10}
-        />
-        <Input
-          label="hasta"
-          placeholder="AAAA-MM-DD"
-          value={endDate}
-          onChangeText={setEndDate}
-          style={styles.dateInput}
-          maxLength={10}
-        />
+
+      {/* Selector visual de rango de fechas en formato argentino DD-MM-AAAA */}
+      <View style={styles.dateSection}>
+        <View style={styles.dateHeaderRow}>
+          <Text style={[styles.dateSectionLabel, { color: colors.textSecondary }]}>
+            FILTRAR POR FECHA (DD-MM-AAAA)
+          </Text>
+          {(startDate || endDate) && (
+            <TouchableOpacity onPress={clearDatesOnly} accessibilityRole="button">
+              <Text style={[styles.clearDatesLink, { color: colors.primary }]}>BORRAR FECHAS</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        <View style={styles.dateRow}>
+          <TouchableOpacity
+            onPress={() => openCalendar('start')}
+            activeOpacity={0.85}
+            style={[
+              styles.dateSelectorBtn,
+              {
+                backgroundColor: colors.surface,
+                borderColor: startDate ? colors.primary : colors.border
+              }
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="seleccionar fecha inicial"
+          >
+            <View style={styles.dateSelectorTop}>
+              <Text style={[styles.dateSelectorLabel, { color: colors.textMuted }]}>DESDE</Text>
+              <Ionicons
+                name="calendar-outline"
+                size={15}
+                color={startDate ? colors.primary : colors.textSecondary}
+              />
+            </View>
+            <Text
+              style={[
+                styles.dateSelectorValue,
+                { color: startDate ? colors.text : colors.textMuted }
+              ]}
+            >
+              {startDate ? isoToDisplay(startDate) : 'DD-MM-AAAA'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => openCalendar('end')}
+            activeOpacity={0.85}
+            style={[
+              styles.dateSelectorBtn,
+              {
+                backgroundColor: colors.surface,
+                borderColor: endDate ? colors.primary : colors.border
+              }
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="seleccionar fecha final"
+          >
+            <View style={styles.dateSelectorTop}>
+              <Text style={[styles.dateSelectorLabel, { color: colors.textMuted }]}>HASTA</Text>
+              <Ionicons
+                name="calendar-outline"
+                size={15}
+                color={endDate ? colors.primary : colors.textSecondary}
+              />
+            </View>
+            <Text
+              style={[
+                styles.dateSelectorValue,
+                { color: endDate ? colors.text : colors.textMuted }
+              ]}
+            >
+              {endDate ? isoToDisplay(endDate) : 'DD-MM-AAAA'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Indicador claro del periodo seleccionado */}
+        <View
+          style={[
+            styles.periodSummaryBox,
+            {
+              backgroundColor:
+                startDate || endDate ? withAlpha(colors.primary, 0.1) : colors.surface,
+              borderColor: startDate || endDate ? colors.primary : colors.border
+            }
+          ]}
+        >
+          <View style={styles.periodSummaryLeft}>
+            <Ionicons
+              name="time-outline"
+              size={16}
+              color={startDate || endDate ? colors.primary : colors.textMuted}
+            />
+            <Text style={[styles.periodSummaryText, { color: colors.textSecondary }]}>
+              Período seleccionado:{' '}
+              <Text style={[styles.periodSummaryHighlight, { color: colors.text }]}>
+                {describePeriod(startDate, endDate)}
+              </Text>
+            </Text>
+          </View>
+          <Text style={[styles.resultsCountBadge, { color: colors.primary }]}>
+            {logs.length} {logs.length === 1 ? 'registro' : 'registros'}
+          </Text>
+        </View>
       </View>
+
       <View style={styles.buttonRow}>
-        <Button title="APLICAR FECHAS" onPress={applyDates} style={styles.flexBtn} />
-        <Button title="LIMPIAR" variant="secondary" onPress={clearFilters} style={styles.flexBtn} />
+        <Button
+          title="ABRIR CALENDARIO"
+          onPress={() => openCalendar('start')}
+          style={styles.flexBtn}
+        />
+        <Button
+          title="LIMPIAR FILTROS"
+          variant="secondary"
+          onPress={clearFilters}
+          disabled={!hasActiveFilters}
+          style={styles.flexBtn}
+        />
       </View>
     </View>
   );
@@ -178,7 +301,7 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
             ListEmptyComponent={
               <EmptyState
                 title="sin actividad registrada"
-                description="no hay acciones que coincidan con los filtros seleccionados."
+                description="no hay acciones que coincidan con los filtros o el período seleccionados."
               />
             }
             renderItem={({ item }) => (
@@ -191,13 +314,23 @@ export function ActivityLogScreen({ navigation }: ScreenProps<'ActivityLog'>) {
                 </View>
                 <Text style={[styles.description, { color: colors.text }]}>{item.description}</Text>
                 <Text style={[styles.meta, { color: colors.textMuted }]}>
-                  {item.user_name || item.user_email || 'usuario eliminado / sistema'} · {formatDateTime(item.created_at)}
+                  {item.user_name || item.user_email || 'usuario eliminado / sistema'} · {formatDateTimeAR(item.created_at)}
                 </Text>
               </Card>
             )}
           />
         )}
       </View>
+
+      <DateRangeCalendarModal
+        visible={calendarVisible}
+        initialStartDate={startDate}
+        initialEndDate={endDate}
+        initialTarget={calendarTarget}
+        onConfirm={handleConfirmDates}
+        onClear={clearDatesOnly}
+        onClose={() => setCalendarVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -206,9 +339,81 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   container: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
   listContent: { flexGrow: 1, paddingBottom: 36 },
-  dateRow: { flexDirection: 'row', gap: 8 },
-  dateInput: { flex: 1, width: undefined },
-  buttonRow: { flexDirection: 'row', gap: 8 },
+  headerContainer: { marginBottom: 8 },
+  dateSection: { marginTop: 6, marginBottom: 4 },
+  dateHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6
+  },
+  dateSectionLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6
+  },
+  clearDatesLink: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  dateRow: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  dateSelectorBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  dateSelectorTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  dateSelectorLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6
+  },
+  dateSelectorValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    marginTop: 4,
+    letterSpacing: 0.4
+  },
+  periodSummaryBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 8,
+    gap: 8
+  },
+  periodSummaryLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1
+  },
+  periodSummaryText: {
+    fontSize: 12,
+    flex: 1
+  },
+  periodSummaryHighlight: {
+    fontWeight: '800'
+  },
+  resultsCountBadge: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.4
+  },
+  buttonRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
   flexBtn: { flex: 1 },
   logCard: { padding: 12, marginVertical: 4 },
   logTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -227,4 +432,3 @@ const styles = StyleSheet.create({
 });
 
 export default ActivityLogScreen;
-

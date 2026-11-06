@@ -61,3 +61,12 @@ export const lightColors: ThemeColors = {
   overlay: 'rgba(0, 0, 0, 0.5)'
 };
 
+// convierte un color hexadecimal (#rrggbb) en rgba con la opacidad indicada, respetando el tema activo
+export function withAlpha(hex: string, alpha: number): string {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return hex;
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}

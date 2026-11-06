@@ -10,3 +10,6 @@ export { DashboardHeader } from './DashboardHeader';
 export { FeaturePlaceholder } from './FeaturePlaceholder';
 export { ScreenTopBar } from './ScreenTopBar';
 export { FilterChips } from './FilterChips';
+export { MemberPickerModal } from './MemberPickerModal';
+export { DateRangeCalendarModal } from './DateRangeCalendarModal';
+

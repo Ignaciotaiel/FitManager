@@ -5,6 +5,7 @@ import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
 import { useAuth } from '../../contexto/authContext';
 import { adminService } from '../../Modules/admin/adminService';
+import { formatDateTimeAR } from '../../Modules/utils/dateFormat';
 import type { Incident, IncidentCategory, IncidentStatus } from '../../Modules/types';
 import {
   Card,
@@ -48,13 +49,6 @@ const STATUS_FILTER_OPTIONS: { value: IncidentStatus | null; label: string }[] =
   { value: 'in_progress', label: STATUS_LABELS.in_progress },
   { value: 'resolved', label: STATUS_LABELS.resolved }
 ];
-
-function formatDateTime(value?: string | null): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('es-AR');
-}
 
 export function IncidentsScreen({ navigation }: ScreenProps<'Incidents'>) {
   const { colors } = useTheme();
@@ -289,17 +283,17 @@ export function IncidentsScreen({ navigation }: ScreenProps<'Incidents'>) {
                 </View>
                 <Text style={[styles.itemContent, { color: colors.textSecondary }]}>{item.description}</Text>
                 <Text style={[styles.meta, { color: colors.textMuted }]}>
-                  {CATEGORY_LABELS[item.category] || item.category} · registrada {formatDateTime(item.created_at)}
+                  {CATEGORY_LABELS[item.category] || item.category} · registrada {formatDateTimeAR(item.created_at)}
                   {item.created_by_name ? ` por ${item.created_by_name}` : ''}
                 </Text>
                 {item.updated_at && item.updated_at !== item.created_at ? (
                   <Text style={[styles.meta, { color: colors.textMuted }]}>
-                    última actualización: {formatDateTime(item.updated_at)}
+                    última actualización: {formatDateTimeAR(item.updated_at)}
                   </Text>
                 ) : null}
                 {item.status === 'resolved' && item.resolved_at ? (
                   <Text style={[styles.meta, { color: colors.textMuted }]}>
-                    resuelta: {formatDateTime(item.resolved_at)}
+                    resuelta: {formatDateTimeAR(item.resolved_at)}
                   </Text>
                 ) : null}
                 {item.resolution_notes ? (

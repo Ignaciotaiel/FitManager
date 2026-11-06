@@ -5,15 +5,9 @@ import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
 import { useAuth } from '../../contexto/authContext';
 import { adminService } from '../../Modules/admin/adminService';
+import { formatDateTimeAR } from '../../Modules/utils/dateFormat';
 import type { AdminNotification } from '../../Modules/types';
 import { Card, StatusBanner, LoadingSpinner, EmptyState, ScreenTopBar } from '../../Modules/components/index';
-
-function formatDateTime(value?: string): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('es-AR');
-}
 
 // bandeja de avisos internos: el backend solo devuelve las notificaciones activas dirigidas
 // a todos o al rol del usuario autenticado
@@ -71,7 +65,7 @@ export function NotificationsInboxScreen({ navigation }: ScreenProps<'Notificati
               <Card style={styles.itemCard}>
                 <Text style={[styles.itemTitle, { color: colors.text }]}>{item.title}</Text>
                 <Text style={[styles.itemContent, { color: colors.textSecondary }]}>{item.content}</Text>
-                <Text style={[styles.meta, { color: colors.textMuted }]}>{formatDateTime(item.created_at)}</Text>
+                <Text style={[styles.meta, { color: colors.textMuted }]}>{formatDateTimeAR(item.created_at)}</Text>
               </Card>
             )}
           />
