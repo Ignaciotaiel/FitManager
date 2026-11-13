@@ -141,6 +141,17 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     }
   }, [token]);
 
+  const reloadExercises = useCallback(async () => {
+    try {
+      const exercisesRes = await exerciseService.getExercises({}, token);
+      if (exercisesRes?.ok && Array.isArray(exercisesRes?.data?.exercises)) {
+        setExercisesLibrary(exercisesRes.data.exercises);
+      }
+    } catch (err) {
+      // mantener la biblioteca previa si falla una recarga puntual en segundo plano
+    }
+  }, [token]);
+
   const reloadMembers = useCallback(async () => {
     try {
       setMembersLoading(true);
@@ -164,10 +175,10 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     loadData();
   }, [loadData]);
 
-  // Actualizar avisos al regresar de la bandeja o periódicamente cada 30 segundos
+  // Sincronizar rutinas, catálogo de técnicas/ejercicios y avisos al regresar al panel o periódicamente
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      refreshUnreadNotifications();
+      loadData();
     });
     const intervalId = setInterval(() => {
       refreshUnreadNotifications();
@@ -176,7 +187,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
       unsubscribe();
       clearInterval(intervalId);
     };
-  }, [navigation, refreshUnreadNotifications]);
+  }, [navigation, loadData, refreshUnreadNotifications]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -189,13 +200,22 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     return availableMembers.filter(m => normalizedIds.includes(Number(m.id)));
   }, [availableMembers, selectedMemberIds]);
 
-  // filtrar biblioteca de ejercicios segun busqueda en tiempo real
+  // filtrar biblioteca de ejercicios segun busqueda en tiempo real (por nombre, grupo muscular o descripcion, ignorando tildes)
   const filteredExercisesLibrary = useMemo(() => {
     if (!exerciseSearchQuery.trim()) return exercisesLibrary;
-    const q = exerciseSearchQuery.toLowerCase().trim();
-    return exercisesLibrary.filter(ex =>
-      ex.name && ex.name.toLowerCase().includes(q)
-    );
+    const normalizeSearch = (str: string) =>
+      String(str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+    const q = normalizeSearch(exerciseSearchQuery);
+    return exercisesLibrary.filter(ex => {
+      const nameMatch = ex.name && normalizeSearch(ex.name).includes(q);
+      const groupMatch = ex.muscle_group && normalizeSearch(ex.muscle_group).includes(q);
+      const descMatch = ex.description && normalizeSearch(ex.description).includes(q);
+      return Boolean(nameMatch || groupMatch || descMatch);
+    });
   }, [exercisesLibrary, exerciseSearchQuery]);
 
   // abrir modal para crear nueva rutina
@@ -209,6 +229,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     setSelectedExercises([]);
     setFormError(null);
     setModalVisible(true);
+    reloadExercises();
   };
 
   // abrir modal para editar rutina
@@ -227,6 +248,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     setExerciseSearchQuery('');
     setFormError(null);
     setModalVisible(true);
+    reloadExercises();
 
     // Si la rutina ya viene con lista de ejercicios, precargarlos; si no, buscarlos por getRoutineById
     if (Array.isArray(routine.exercises) && routine.exercises.length > 0) {
@@ -276,7 +298,8 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
 
   // agregar un ejercicio de la biblioteca a la rutina
   const handleAddExerciseToRoutine = (ex) => {
-    if (selectedExercises.some((item) => item.exercise_id === ex.id)) {
+    const targetId = Number(ex.id);
+    if (selectedExercises.some((item) => Number(item.exercise_id) === targetId)) {
       return; // ya seleccionado
     }
 
@@ -284,7 +307,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     setSelectedExercises((prev) => [
       ...prev,
       {
-        exercise_id: ex.id,
+        exercise_id: targetId,
         name: ex.name,
         sets_count: 3,
         reps: '10-12',
@@ -295,9 +318,10 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
 
   // remover ejercicio seleccionado
   const handleRemoveExercise = (exerciseId) => {
+    const targetId = Number(exerciseId);
     setSelectedExercises((prev) =>
       prev
-        .filter((item) => item.exercise_id !== exerciseId)
+        .filter((item) => Number(item.exercise_id) !== targetId)
         .map((item, idx) => ({ ...item, position: idx + 1 }))
     );
   };
@@ -318,9 +342,10 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
 
   // actualizar series o repeticiones de un ejercicio seleccionado
   const handleUpdateExerciseParam = (exerciseId, field, val) => {
+    const targetId = Number(exerciseId);
     setSelectedExercises((prev) =>
       prev.map((item) => {
-        if (item.exercise_id === exerciseId) {
+        if (Number(item.exercise_id) === targetId) {
           return { ...item, [field]: val };
         }
         return item;
@@ -977,7 +1002,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
                   ) : (
                     <>
                       <Input
-                        placeholder="Buscar ejercicio por nombre..."
+                        placeholder="Buscar técnica por nombre o grupo muscular..."
                         value={exerciseSearchQuery}
                         onChangeText={setExerciseSearchQuery}
                         style={{ marginVertical: 4 }}
@@ -990,7 +1015,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
                       ) : (
                         <View style={styles.libraryPicker}>
                           {filteredExercisesLibrary.map((ex) => {
-                            const isAlreadyAdded = selectedExercises.some((s) => s.exercise_id === ex.id);
+                            const isAlreadyAdded = selectedExercises.some((s) => Number(s.exercise_id) === Number(ex.id));
                             return (
                               <TouchableOpacity
                                 key={String(ex.id)}

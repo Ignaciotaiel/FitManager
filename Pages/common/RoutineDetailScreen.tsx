@@ -18,7 +18,7 @@ import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { routineService } from '../../Modules/routines/routineService';
 import { workoutService } from '../../Modules/workouts/workoutService';
-import { formatDateAR } from '../../Modules/utils/dateFormat';
+import { formatDateAR, cleanDisplayText } from '../../Modules/utils/dateFormat';
 import {
   Card,
   Input,
@@ -137,7 +137,7 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
       }
     } catch (error) {
       if (error.status === 403) {
-        setErrorMessage('no tienes permiso para ver esta rutina');
+        setErrorMessage('no tenés permiso para ver esta rutina');
       } else if (error.status === 404) {
         setErrorMessage('la rutina solicitada no existe');
       } else if (error.code === 'NETWORK_ERROR') {
@@ -208,10 +208,10 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
               }
             } catch (e) {}
           }
-          setSuccessMessage('¡Sesión activa recuperada! Continúa registrando tus series.');
+          setSuccessMessage('¡Sesión activa recuperada! Continuá registrando tus series.');
         } else {
           setRegisteredSets({});
-          setSuccessMessage('¡Entrenamiento iniciado! Ya puedes registrar los kilos de tus series.');
+          setSuccessMessage('¡Entrenamiento iniciado! Ya podés registrar los kilos de tus series.');
         }
       }
     } catch (err) {
@@ -243,17 +243,17 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
   // Guardar serie en la sesion activa
   const handleSaveSet = async () => {
     if (!activeSession) {
-      setModalError('Debes iniciar el entrenamiento primero');
+      setModalError('Debés iniciar el entrenamiento primero');
       return;
     }
     const weightNum = parseFloat(inputWeight);
     if (isNaN(weightNum) || weightNum < 0) {
-      setModalError('Ingresa un peso válido en kg (ej. 45 o 60.5)');
+      setModalError('Ingresá un peso válido en kg (ej. 45 o 60.5)');
       return;
     }
     const repsNum = parseInt(inputReps, 10);
     if (isNaN(repsNum) || repsNum <= 0) {
-      setModalError('Ingresa una cantidad de repeticiones válida');
+      setModalError('Ingresá una cantidad de repeticiones válida');
       return;
     }
 
@@ -339,12 +339,12 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
     if (!editingSet) return;
     const weightNum = parseFloat(editWeight);
     if (isNaN(weightNum) || weightNum < 0) {
-      setEditSetError('Ingresa un peso válido en kg (ej. 45 o 60.5)');
+      setEditSetError('Ingresá un peso válido en kg (ej. 45 o 60.5)');
       return;
     }
     const repsNum = parseInt(editReps, 10);
     if (isNaN(repsNum) || repsNum <= 0) {
-      setEditSetError('Ingresa una cantidad de repeticiones válida');
+      setEditSetError('Ingresá una cantidad de repeticiones válida');
       return;
     }
 
@@ -514,11 +514,11 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
               </View>
 
               <Text style={[styles.routineName, { color: colors.text }]}>
-                {routine.name}
+                {cleanDisplayText(routine.name)}
               </Text>
               {routine.description ? (
                 <Text style={[styles.routineDesc, { color: colors.textSecondary }]}>
-                  {routine.description}
+                  {cleanDisplayText(routine.description)}
                 </Text>
               ) : null}
 
@@ -621,7 +621,7 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
                         </Text>
                       </View>
                       <Text style={[styles.exerciseTitle, { color: colors.text }]}>
-                        {ex.name}
+                        {cleanDisplayText(ex.name)}
                       </Text>
                     </View>
 
@@ -640,7 +640,7 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
                         <View style={[styles.paramBox, { backgroundColor: colors.surface, borderColor: colors.primary }]}>
                           <Text style={[styles.paramLabel, { color: colors.primary }]}>ÚLTIMA VEZ</Text>
                           <Text style={[styles.paramValue, { color: colors.text }]}>
-                            {prevLog.weight_kg} kg x {prevLog.reps_completed}
+                            {prevLog.weight_kg} kg × {prevLog.reps_completed} reps
                           </Text>
                         </View>
                       )}
@@ -656,7 +656,7 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
                           {setsLogged.map(s => (
                             <View key={String(s.id)} style={[styles.setChip, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                               <Text style={[styles.setChipText, { color: colors.text }]}>
-                                #{s.set_number}: <Text style={{ color: colors.primary, fontWeight: '800' }}>{s.weight_kg} kg</Text> x {s.reps_completed}
+                                #{s.set_number}: <Text style={{ color: colors.primary, fontWeight: '800' }}>{s.weight_kg} kg</Text> × {s.reps_completed} reps
                               </Text>
                               {activeSession && user?.role === 'member' && (
                                 <View style={styles.setChipActions}>
@@ -698,7 +698,7 @@ export function RoutineDetailScreen({ route, navigation }: ScreenProps<'RoutineD
 
                     {ex.description ? (
                       <Text style={[styles.exerciseTech, { color: colors.textSecondary }]}>
-                        {ex.description}
+                        {cleanDisplayText(ex.description)}
                       </Text>
                     ) : null}
                   </Card>

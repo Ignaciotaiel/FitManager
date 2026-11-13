@@ -26,6 +26,56 @@ function isValidSetNumber(val) {
   return Number.isInteger(num) && num > 0 && num <= 100;
 }
 
+const MOJIBAKE_PAIRS = [
+  [/Ã¡/g, 'á'],
+  [/Ã©/g, 'é'],
+  [/Ã­/g, 'í'],
+  [/Ã³/g, 'ó'],
+  [/Ãº/g, 'ú'],
+  [/Ã±/g, 'ñ'],
+  [/Ã¼/g, 'ü'],
+  [/Ã\x81/g, 'Á'],
+  [/Ã‰/g, 'É'],
+  [/Ã\x89/g, 'É'],
+  [/Ã\x8d/g, 'Í'],
+  [/Ã“/g, 'Ó'],
+  [/Ã\x93/g, 'Ó'],
+  [/Ãš/g, 'Ú'],
+  [/Ã\x9a/g, 'Ú'],
+  [/Ã‘/g, 'Ñ'],
+  [/Ã\x91/g, 'Ñ'],
+  [/Ãœ/g, 'Ü'],
+  [/Ã\x9c/g, 'Ü'],
+  [/Â¡/g, '¡'],
+  [/Â¿/g, '¿'],
+  [/Âª/g, 'ª'],
+  [/Âº/g, 'º'],
+  [/â€”/g, '—'],
+  [/â€“/g, '–']
+];
+
+/**
+ * Normaliza textos de salida reparando secuencias UTF-8 mal codificadas en registros históricos
+ * (ej. "SesiÃ³n" -> "Sesión") sin alterar los registros almacenados en la base de datos.
+ */
+export function normalizeDisplayText(val) {
+  if (val === null || val === undefined || typeof val !== 'string') return val;
+  let result = val;
+  for (const [regex, replacement] of MOJIBAKE_PAIRS) {
+    result = result.replace(regex, replacement);
+  }
+  return result;
+}
+
+function normalizeSetRecord(st) {
+  if (!st || typeof st !== 'object') return st;
+  return {
+    ...st,
+    exercise_name: normalizeDisplayText(st.exercise_name),
+    muscle_group: normalizeDisplayText(st.muscle_group)
+  };
+}
+
 // Helper para saber si routine_assignments existe físicamente en MariaDB
 let hasAssignmentsTableCache = null;
 async function checkHasAssignmentsTable() {
@@ -165,7 +215,7 @@ export async function createSession(req, res, next) {
       if (!Number.isInteger(parsedRoutine) || parsedRoutine <= 0) {
         return res.status(400).json({
           ok: false,
-          error: { message: 'identificador de rutina invalido', code: 'INVALID_ROUTINE_ID' }
+          error: { message: 'identificador de rutina inválido', code: 'INVALID_ROUTINE_ID' }
         });
       }
 
@@ -199,7 +249,7 @@ export async function createSession(req, res, next) {
         } else {
           return res.status(403).json({
             ok: false,
-            error: { message: 'no tienes permiso para usar una rutina asignada a otro socio', code: 'FORBIDDEN' }
+            error: { message: 'no tenés permiso para usar una rutina asignada a otro socio', code: 'FORBIDDEN' }
           });
         }
       }
@@ -214,13 +264,13 @@ export async function createSession(req, res, next) {
       if (isNaN(d.getTime())) {
         return res.status(400).json({
           ok: false,
-          error: { message: 'fecha de sesion invalida', code: 'INVALID_DATE' }
+          error: { message: 'fecha de sesión inválida', code: 'INVALID_DATE' }
         });
       }
       validatedDate = d;
     }
 
-    const cleanNotes = notes && typeof notes === 'string' ? notes.trim() : null;
+    const cleanNotes = notes && typeof notes === 'string' ? normalizeDisplayText(notes.trim()) : null;
 
     // Validar series si fueron enviadas en el payload inicial
     const cleanSets = [];
@@ -238,21 +288,21 @@ export async function createSession(req, res, next) {
         if (!Number.isInteger(exId) || exId <= 0) {
           return res.status(400).json({
             ok: false,
-            error: { message: `el ejercicio en posicion ${i + 1} no tiene un id valido`, code: 'INVALID_EXERCISE_ID' }
+            error: { message: `el ejercicio en posición ${i + 1} no tiene un id válido`, code: 'INVALID_EXERCISE_ID' }
           });
         }
 
         if (!isValidWeight(item.weight_kg)) {
           return res.status(400).json({
             ok: false,
-            error: { message: `el peso en posicion ${i + 1} debe ser un numero positivo valido`, code: 'INVALID_WEIGHT' }
+            error: { message: `el peso en posición ${i + 1} debe ser un número positivo válido`, code: 'INVALID_WEIGHT' }
           });
         }
 
         if (!isValidReps(item.reps_completed)) {
           return res.status(400).json({
             ok: false,
-            error: { message: `las repeticiones en posicion ${i + 1} deben ser un entero positivo`, code: 'INVALID_REPS' }
+            error: { message: `las repeticiones en posición ${i + 1} deben ser un entero positivo`, code: 'INVALID_REPS' }
           });
         }
 
@@ -260,7 +310,7 @@ export async function createSession(req, res, next) {
         if (!isValidSetNumber(setNum)) {
           return res.status(400).json({
             ok: false,
-            error: { message: `el numero de serie en posicion ${i + 1} es invalido`, code: 'INVALID_SET_NUMBER' }
+            error: { message: `el número de serie en posición ${i + 1} es inválido`, code: 'INVALID_SET_NUMBER' }
           });
         }
 
@@ -285,7 +335,7 @@ export async function createSession(req, res, next) {
         if (foundEx.length !== uniqueExIds.length) {
           return res.status(400).json({
             ok: false,
-            error: { message: 'uno o mas ejercicios indicados no existen', code: 'EXERCISE_NOT_FOUND' }
+            error: { message: 'uno o más ejercicios indicados no existen', code: 'EXERCISE_NOT_FOUND' }
           });
         }
       }
@@ -365,12 +415,13 @@ export async function createSession(req, res, next) {
 
         return res.status(200).json({
           ok: true,
-          message: 'sesion de entrenamiento activa recuperada',
+          message: 'sesión de entrenamiento activa recuperada',
           data: {
             session: {
               ...active,
+              notes: normalizeDisplayText(active.notes),
               sets_count: existingSets.length,
-              sets: existingSets
+              sets: existingSets.map(normalizeSetRecord)
             }
           }
         });
@@ -407,7 +458,7 @@ export async function createSession(req, res, next) {
 
     return res.status(201).json({
       ok: true,
-      message: 'sesion de entrenamiento registrada exitosamente',
+      message: 'sesión de entrenamiento registrada exitosamente',
       data: {
         session: {
           id: sessionId,
@@ -448,7 +499,7 @@ export async function addSetToSession(req, res, next) {
     if (!Number.isInteger(parsedSessionId) || parsedSessionId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de sesion invalido', code: 'INVALID_SESSION_ID' }
+        error: { message: 'identificador de sesión inválido', code: 'INVALID_SESSION_ID' }
       });
     }
 
@@ -458,7 +509,7 @@ export async function addSetToSession(req, res, next) {
     if (!Number.isInteger(parsedExId) || parsedExId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de ejercicio invalido', code: 'INVALID_EXERCISE_ID' }
+        error: { message: 'identificador de ejercicio inválido', code: 'INVALID_EXERCISE_ID' }
       });
     }
 
@@ -474,14 +525,14 @@ export async function addSetToSession(req, res, next) {
     if (!isValidWeight(weight_kg)) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'el peso debe ser un numero positivo valido en kg', code: 'INVALID_WEIGHT' }
+        error: { message: 'el peso debe ser un número positivo válido en kg', code: 'INVALID_WEIGHT' }
       });
     }
 
     if (!isValidReps(reps_completed)) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'las repeticiones deben ser un numero entero positivo', code: 'INVALID_REPS' }
+        error: { message: 'las repeticiones deben ser un número entero positivo', code: 'INVALID_REPS' }
       });
     }
 
@@ -489,7 +540,7 @@ export async function addSetToSession(req, res, next) {
     if (parsedSetNumber !== null && !isValidSetNumber(parsedSetNumber)) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'numero de serie invalido', code: 'INVALID_SET_NUMBER' }
+        error: { message: 'número de serie inválido', code: 'INVALID_SET_NUMBER' }
       });
     }
 
@@ -508,7 +559,7 @@ export async function addSetToSession(req, res, next) {
       await connection.rollback();
       return res.status(404).json({
         ok: false,
-        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+        error: { message: 'la sesión de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
       });
     }
 
@@ -516,7 +567,7 @@ export async function addSetToSession(req, res, next) {
       await connection.rollback();
       return res.status(403).json({
         ok: false,
-        error: { message: 'no tienes permiso para agregar series a esta sesion', code: 'FORBIDDEN' }
+        error: { message: 'no tenés permiso para agregar series a esta sesión', code: 'FORBIDDEN' }
       });
     }
 
@@ -525,7 +576,7 @@ export async function addSetToSession(req, res, next) {
       await connection.rollback();
       return res.status(400).json({
         ok: false,
-        error: { message: 'la sesion ya ha sido finalizada y no puede recibir nuevas series', code: 'SESSION_COMPLETED' }
+        error: { message: 'la sesión ya ha sido finalizada y no puede recibir nuevas series', code: 'SESSION_COMPLETED' }
       });
     }
 
@@ -592,14 +643,14 @@ export async function getWorkoutHistory(req, res, next) {
       if (!Number.isInteger(queryMemberId) || queryMemberId <= 0) {
         return res.status(400).json({
           ok: false,
-          error: { message: 'identificador de socio invalido', code: 'INVALID_MEMBER_ID' }
+          error: { message: 'identificador de socio inválido', code: 'INVALID_MEMBER_ID' }
         });
       }
 
       if (role === 'member' && queryMemberId !== authUserId) {
         return res.status(403).json({
           ok: false,
-          error: { message: 'no tienes permiso para consultar entrenamientos de otros usuarios', code: 'FORBIDDEN' }
+          error: { message: 'no tenés permiso para consultar entrenamientos de otros usuarios', code: 'FORBIDDEN' }
         });
       }
 
@@ -608,7 +659,7 @@ export async function getWorkoutHistory(req, res, next) {
         if (!hasAccess) {
           return res.status(403).json({
             ok: false,
-            error: { message: 'no tienes permiso para ver el historial de este socio (no tienes rutinas asignadas a él)', code: 'FORBIDDEN' }
+            error: { message: 'no tenés permiso para ver el historial de este socio (no tenés rutinas asignadas a él)', code: 'FORBIDDEN' }
           });
         }
       }
@@ -693,13 +744,16 @@ export async function getWorkoutHistory(req, res, next) {
     const setsBySession = {};
     for (const s of sets) {
       if (!setsBySession[s.session_id]) setsBySession[s.session_id] = [];
-      setsBySession[s.session_id].push(s);
+      setsBySession[s.session_id].push(normalizeSetRecord(s));
     }
 
     const formattedSessions = sessions.map(s => {
       const dur = calculateSessionDuration(s);
       return {
         ...s,
+        notes: normalizeDisplayText(s.notes),
+        routine_name: normalizeDisplayText(s.routine_name),
+        user_name: normalizeDisplayText(s.user_name),
         duration_seconds: dur.duration_seconds,
         duration_formatted: dur.duration_formatted,
         sets: setsBySession[s.id] || []
@@ -732,7 +786,7 @@ export async function getSessionById(req, res, next) {
     if (!Number.isInteger(parsedSessionId) || parsedSessionId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de sesion invalido', code: 'INVALID_SESSION_ID' }
+        error: { message: 'identificador de sesión inválido', code: 'INVALID_SESSION_ID' }
       });
     }
 
@@ -740,7 +794,7 @@ export async function getSessionById(req, res, next) {
     if (!hasWorkoutTables) {
       return res.status(404).json({
         ok: false,
-        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+        error: { message: 'la sesión de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
       });
     }
 
@@ -770,7 +824,7 @@ export async function getSessionById(req, res, next) {
     if (sessions.length === 0) {
       return res.status(404).json({
         ok: false,
-        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+        error: { message: 'la sesión de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
       });
     }
 
@@ -780,7 +834,7 @@ export async function getSessionById(req, res, next) {
     if (role === 'member' && Number(session.user_id) !== Number(authUserId)) {
       return res.status(403).json({
         ok: false,
-        error: { message: 'no tienes permiso para consultar el detalle de esta sesion', code: 'FORBIDDEN' }
+        error: { message: 'no tenés permiso para consultar el detalle de esta sesión', code: 'FORBIDDEN' }
       });
     }
 
@@ -789,7 +843,7 @@ export async function getSessionById(req, res, next) {
       if (!hasAccess) {
         return res.status(403).json({
           ok: false,
-          error: { message: 'no tienes permiso para ver las sesiones de este socio', code: 'FORBIDDEN' }
+          error: { message: 'no tenés permiso para ver las sesiones de este socio', code: 'FORBIDDEN' }
         });
       }
     }
@@ -822,9 +876,12 @@ export async function getSessionById(req, res, next) {
       data: {
         session: {
           ...session,
+          notes: normalizeDisplayText(session.notes),
+          routine_name: normalizeDisplayText(session.routine_name),
+          user_name: normalizeDisplayText(session.user_name),
           duration_seconds: dur.duration_seconds,
           duration_formatted: dur.duration_formatted,
-          sets: sets || []
+          sets: (sets || []).map(normalizeSetRecord)
         }
       }
     });
@@ -847,7 +904,7 @@ export async function getLastExerciseLog(req, res, next) {
     if (!Number.isInteger(parsedExId) || parsedExId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de ejercicio invalido', code: 'INVALID_EXERCISE_ID' }
+        error: { message: 'identificador de ejercicio inválido', code: 'INVALID_EXERCISE_ID' }
       });
     }
 
@@ -883,7 +940,7 @@ export async function getLastExerciseLog(req, res, next) {
     return res.status(200).json({
       ok: true,
       data: {
-        last_log: rows.length > 0 ? rows[0] : null
+        last_log: rows.length > 0 ? normalizeSetRecord(rows[0]) : null
       }
     });
   } catch (error) {
@@ -904,7 +961,7 @@ export async function getExerciseHistory(req, res, next) {
     if (!Number.isInteger(parsedExId) || parsedExId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de ejercicio invalido', code: 'INVALID_EXERCISE_ID' }
+        error: { message: 'identificador de ejercicio inválido', code: 'INVALID_EXERCISE_ID' }
       });
     }
 
@@ -914,14 +971,14 @@ export async function getExerciseHistory(req, res, next) {
       if (!Number.isInteger(queryMemberId) || queryMemberId <= 0) {
         return res.status(400).json({
           ok: false,
-          error: { message: 'identificador de socio invalido', code: 'INVALID_MEMBER_ID' }
+          error: { message: 'identificador de socio inválido', code: 'INVALID_MEMBER_ID' }
         });
       }
 
       if (role === 'member' && queryMemberId !== authUserId) {
         return res.status(403).json({
           ok: false,
-          error: { message: 'no tienes permiso para ver registros ajenos', code: 'FORBIDDEN' }
+          error: { message: 'no tenés permiso para ver registros ajenos', code: 'FORBIDDEN' }
         });
       }
 
@@ -930,7 +987,7 @@ export async function getExerciseHistory(req, res, next) {
         if (!hasAccess) {
           return res.status(403).json({
             ok: false,
-            error: { message: 'no tienes permiso para ver el historial de este socio', code: 'FORBIDDEN' }
+            error: { message: 'no tenés permiso para ver el historial de este socio', code: 'FORBIDDEN' }
           });
         }
       }
@@ -963,7 +1020,7 @@ export async function getExerciseHistory(req, res, next) {
       INNER JOIN exercises e ON sl.exercise_id = e.id
       INNER JOIN workout_sessions ws ON sl.session_id = ws.id
       WHERE sl.user_id = ? AND sl.exercise_id = ?
-      ORDER BY ws.session_date DESC, sl.set_number ASC
+      ORDER BY ws.session_date DESC, ws.id DESC, sl.set_number ASC
       LIMIT 100`,
       [targetUserId, parsedExId]
     );
@@ -971,7 +1028,7 @@ export async function getExerciseHistory(req, res, next) {
     return res.status(200).json({
       ok: true,
       data: {
-        history: rows
+        history: (rows || []).map(normalizeSetRecord)
       }
     });
   } catch (error) {
@@ -994,7 +1051,7 @@ export async function updateSet(req, res, next) {
     if (!Number.isInteger(setId) || setId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de serie invalido', code: 'INVALID_ID' }
+        error: { message: 'identificador de serie inválido', code: 'INVALID_ID' }
       });
     }
 
@@ -1003,21 +1060,21 @@ export async function updateSet(req, res, next) {
     if (weight_kg !== undefined && !isValidWeight(weight_kg)) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'peso invalido', code: 'INVALID_WEIGHT' }
+        error: { message: 'peso inválido', code: 'INVALID_WEIGHT' }
       });
     }
 
     if (reps_completed !== undefined && !isValidReps(reps_completed)) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'repeticiones invalidas', code: 'INVALID_REPS' }
+        error: { message: 'repeticiones inválidas', code: 'INVALID_REPS' }
       });
     }
 
     if (set_number !== undefined && !isValidSetNumber(set_number)) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'numero de serie invalido', code: 'INVALID_SET_NUMBER' }
+        error: { message: 'número de serie inválido', code: 'INVALID_SET_NUMBER' }
       });
     }
 
@@ -1043,7 +1100,7 @@ export async function updateSet(req, res, next) {
       await connection.rollback();
       return res.status(403).json({
         ok: false,
-        error: { message: 'no tienes permiso para modificar series de otro usuario', code: 'FORBIDDEN' }
+        error: { message: 'no tenés permiso para modificar series de otro usuario', code: 'FORBIDDEN' }
       });
     }
 
@@ -1056,7 +1113,7 @@ export async function updateSet(req, res, next) {
       await connection.rollback();
       return res.status(400).json({
         ok: false,
-        error: { message: 'no se pueden modificar series de una sesion finalizada', code: 'SESSION_COMPLETED' }
+        error: { message: 'no se pueden modificar series de una sesión finalizada', code: 'SESSION_COMPLETED' }
       });
     }
 
@@ -1109,7 +1166,7 @@ export async function deleteSet(req, res, next) {
     if (!Number.isInteger(setId) || setId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de serie invalido', code: 'INVALID_ID' }
+        error: { message: 'identificador de serie inválido', code: 'INVALID_ID' }
       });
     }
 
@@ -1136,7 +1193,7 @@ export async function deleteSet(req, res, next) {
       await connection.rollback();
       return res.status(403).json({
         ok: false,
-        error: { message: 'no tienes permiso para eliminar series de otro usuario', code: 'FORBIDDEN' }
+        error: { message: 'no tenés permiso para eliminar series de otro usuario', code: 'FORBIDDEN' }
       });
     }
 
@@ -1149,7 +1206,7 @@ export async function deleteSet(req, res, next) {
       await connection.rollback();
       return res.status(400).json({
         ok: false,
-        error: { message: 'no se pueden eliminar series de una sesion finalizada', code: 'SESSION_COMPLETED' }
+        error: { message: 'no se pueden eliminar series de una sesión finalizada', code: 'SESSION_COMPLETED' }
       });
     }
 
@@ -1201,7 +1258,7 @@ export async function finishSession(req, res, next) {
     if (!Number.isInteger(parsedSessionId) || parsedSessionId <= 0) {
       return res.status(400).json({
         ok: false,
-        error: { message: 'identificador de sesion invalido', code: 'INVALID_SESSION_ID' }
+        error: { message: 'identificador de sesión inválido', code: 'INVALID_SESSION_ID' }
       });
     }
 
@@ -1218,7 +1275,7 @@ export async function finishSession(req, res, next) {
       await connection.rollback();
       return res.status(404).json({
         ok: false,
-        error: { message: 'la sesion de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
+        error: { message: 'la sesión de entrenamiento no existe', code: 'SESSION_NOT_FOUND' }
       });
     }
 
@@ -1226,7 +1283,7 @@ export async function finishSession(req, res, next) {
       await connection.rollback();
       return res.status(403).json({
         ok: false,
-        error: { message: 'no tienes permiso para finalizar esta sesion', code: 'FORBIDDEN' }
+        error: { message: 'no tenés permiso para finalizar esta sesión', code: 'FORBIDDEN' }
       });
     }
 
@@ -1236,7 +1293,7 @@ export async function finishSession(req, res, next) {
         await connection.commit();
         return res.status(200).json({
           ok: true,
-          message: 'la sesion ya se encontraba finalizada',
+          message: 'la sesión ya se encontraba finalizada',
           data: { session: sessions[0] }
         });
       }
@@ -1254,14 +1311,16 @@ export async function finishSession(req, res, next) {
 
     await connection.commit();
 
-    const dur = calculateSessionDuration(updated[0] || { id: parsedSessionId, status: 'completed' });
+    const rawUpdated = updated[0] || { id: parsedSessionId, status: 'completed' };
+    const dur = calculateSessionDuration(rawUpdated);
 
     return res.status(200).json({
       ok: true,
-      message: 'sesion de entrenamiento finalizada con exito',
+      message: 'sesión de entrenamiento finalizada con éxito',
       data: {
         session: {
-          ...(updated[0] || { id: parsedSessionId, status: 'completed' }),
+          ...rawUpdated,
+          notes: normalizeDisplayText(rawUpdated.notes),
           duration_seconds: dur.duration_seconds,
           duration_formatted: dur.duration_formatted
         }
@@ -1366,9 +1425,10 @@ export async function getActiveSession(req, res, next) {
       data: {
         active_session: {
           ...activeSession,
+          notes: normalizeDisplayText(activeSession.notes),
           duration_seconds: dur.duration_seconds,
           duration_formatted: dur.duration_formatted,
-          sets: sets || []
+          sets: (sets || []).map(normalizeSetRecord)
         }
       }
     });

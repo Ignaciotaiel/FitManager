@@ -131,3 +131,46 @@ export function firstWeekdayOffset(year: number, month: number): number {
   return (jsDay + 6) % 7;
 }
 
+// Mapa explícito de secuencias UTF-8 mal interpretadas como Latin-1 / Windows-1252 (mojibake)
+const MOJIBAKE_MAP: Array<[RegExp, string]> = [
+  [/Ã¡/g, 'á'],
+  [/Ã©/g, 'é'],
+  [/Ã­/g, 'í'],
+  [/Ã³/g, 'ó'],
+  [/Ãº/g, 'ú'],
+  [/Ã±/g, 'ñ'],
+  [/Ã¼/g, 'ü'],
+  [/Ã\x81/g, 'Á'],
+  [/Ã‰/g, 'É'],
+  [/Ã\x89/g, 'É'],
+  [/Ã\x8d/g, 'Í'],
+  [/Ã“/g, 'Ó'],
+  [/Ã\x93/g, 'Ó'],
+  [/Ãš/g, 'Ú'],
+  [/Ã\x9a/g, 'Ú'],
+  [/Ã‘/g, 'Ñ'],
+  [/Ã\x91/g, 'Ñ'],
+  [/Ãœ/g, 'Ü'],
+  [/Ã\x9c/g, 'Ü'],
+  [/Â¡/g, '¡'],
+  [/Â¿/g, '¿'],
+  [/Âª/g, 'ª'],
+  [/Âº/g, 'º'],
+  [/â€”/g, '—'],
+  [/â€“/g, '–']
+];
+
+// Normaliza textos visibles para reparar codificaciones históricas mal interpretadas (ej. "SesiÃ³n" -> "Sesión") sin alterar la base de datos.
+export function cleanDisplayText(value: string | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  let text = String(value);
+  if (!text) return '';
+
+  for (const [pattern, replacement] of MOJIBAKE_MAP) {
+    text = text.replace(pattern, replacement);
+  }
+
+  return text;
+}
+
+

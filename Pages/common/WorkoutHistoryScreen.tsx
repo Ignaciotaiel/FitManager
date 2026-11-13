@@ -22,7 +22,8 @@ import {
   isoToDisplay,
   formatDateAR,
   toLocalIsoDate,
-  describePeriod
+  describePeriod,
+  cleanDisplayText
 } from '../../Modules/utils/dateFormat';
 import {
   DashboardHeader,
@@ -82,7 +83,7 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
       }
     } catch (err) {
       if (err.status === 403) {
-        setErrorMessage('no tienes permiso para ver este historial');
+        setErrorMessage('no tenés permiso para ver este historial');
       } else if (err.code === 'NETWORK_ERROR') {
         setErrorMessage('no se pudo conectar con el servidor para obtener el historial');
       } else {
@@ -185,8 +186,8 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
       if (!map[exKey]) {
         map[exKey] = {
           exercise_id: st.exercise_id,
-          exercise_name: st.exercise_name || 'Ejercicio',
-          muscle_group: st.muscle_group,
+          exercise_name: cleanDisplayText(st.exercise_name) || 'Ejercicio',
+          muscle_group: cleanDisplayText(st.muscle_group),
           sets: []
         };
       }
@@ -204,7 +205,7 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
 
     // Obtener nombres únicos de ejercicios entrenados en esta sesión
     const uniqueExercises = Array.isArray(item.sets)
-      ? [...new Set(item.sets.map(s => s.exercise_name).filter(Boolean))]
+      ? [...new Set(item.sets.map(s => cleanDisplayText(s.exercise_name)).filter(Boolean))]
       : [];
 
     return (
@@ -215,7 +216,7 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
               {formattedDate}
             </Text>
             <Text style={[styles.routineTitle, { color: colors.text }]}>
-              {item.routine_name ? item.routine_name : 'Entrenamiento Libre'}
+              {item.routine_name ? cleanDisplayText(item.routine_name) : 'Entrenamiento Libre'}
             </Text>
           </View>
 
@@ -515,7 +516,9 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
                       : 'Detalle de Sesión'}
                   </Text>
                   <Text style={[styles.modalTitle, { color: colors.text }]}>
-                    {selectedSession?.routine_name || 'Entrenamiento Libre'}
+                    {selectedSession?.routine_name
+                      ? cleanDisplayText(selectedSession.routine_name)
+                      : 'Entrenamiento Libre'}
                   </Text>
                   {selectedSession?.duration_formatted ? (
                     <Text style={[styles.modalDuration, { color: colors.primary }]}>
@@ -538,15 +541,15 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
                 <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
                   {selectedSession?.notes ? (
                     <View style={[styles.notesBox, { backgroundColor: colors.background, borderColor: colors.border }]}>
-                      <Text style={[styles.notesLabel, { color: colors.textMuted }]}>NOTAS:</Text>
+                      <Text style={[styles.notesLabel, { color: colors.textMuted }]}>NOTAS DE LA SESIÓN:</Text>
                       <Text style={[styles.notesText, { color: colors.textSecondary }]}>
-                        {selectedSession.notes}
+                        {cleanDisplayText(selectedSession.notes)}
                       </Text>
                     </View>
                   ) : null}
 
                   <Text style={[styles.detailSectionTitle, { color: colors.text }]}>
-                    SERIES Y PESOS REGISTRADOS
+                    SERIES, KILOS Y REPETICIONES REGISTRADAS
                   </Text>
 
                   {groupedSets.length === 0 ? (
@@ -577,7 +580,7 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
                                 <Text style={{ color: colors.primary, fontWeight: '800' }}>{st.weight_kg} kg</Text>
                               </Text>
                               <Text style={[styles.setRepsText, { color: colors.textSecondary }]}>
-                                {st.reps_completed} reps
+                                {st.reps_completed} {Number(st.reps_completed) === 1 ? 'repetición' : 'repeticiones'}
                               </Text>
                               {st.rpe ? (
                                 <Text style={[styles.setRpeText, { color: colors.textMuted }]}>

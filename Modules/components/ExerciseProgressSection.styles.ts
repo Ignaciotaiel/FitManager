@@ -188,7 +188,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
-    height: 150,
+    height: 176,
     paddingTop: 10,
     gap: 4
   },
@@ -199,11 +199,16 @@ export const styles = StyleSheet.create({
   },
   barWeightLabel: {
     fontSize: 10,
+    lineHeight: 12
+  },
+  barRepsLabel: {
+    fontSize: 9,
+    lineHeight: 11,
     marginBottom: 4
   },
   barTrack: {
     width: '100%',
-    height: 105,
+    height: 100,
     justifyContent: 'flex-end',
     alignItems: 'center'
   },
@@ -218,13 +223,138 @@ export const styles = StyleSheet.create({
     fontSize: 9,
     marginTop: 5
   },
+  barSubDateLabel: {
+    fontSize: 8,
+    lineHeight: 10,
+    marginTop: 1
+  },
   pointDetailBar: {
     borderTopWidth: StyleSheet.hairlineWidth,
     marginTop: 10,
-    paddingTop: 8
+    paddingTop: 8,
+    gap: 6
   },
   pointDetailText: {
     fontSize: 11,
-    textAlign: 'center'
+    textAlign: 'center',
+    lineHeight: 16
+  },
+  pointSetsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 2
+  },
+  pointSetChip: {
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  pointSetChipText: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  bestMarksCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    gap: 8
+  },
+  bestMarksHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8
+  },
+  bestMarksHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1
+  },
+  bestMarksTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.6
+  },
+  bestMarksExerciseName: {
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 1
+  },
+  bestMarksGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  bestMarkItem: {
+    flex: 1,
+    minWidth: 140,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 3
+  },
+  bestMarkBadge: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    marginBottom: 2
+  },
+  bestMarkMainValue: {
+    fontSize: 14,
+    fontWeight: '900'
+  },
+  bestMarkMetaText: {
+    fontSize: 11,
+    lineHeight: 15
+  },
+  allRecordsSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 8
+  },
+  allRecordsTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.6
+  },
+  allRecordsGrid: {
+    gap: 8
+  },
+  recordSummaryCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    gap: 4
+  },
+  recordSummaryTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8
+  },
+  recordSummaryExName: {
+    fontSize: 12,
+    fontWeight: '900',
+    flex: 1
+  },
+  recordSummaryMuscle: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  recordSummaryDetailsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 2
+  },
+  recordSummaryText: {
+    fontSize: 11,
+    lineHeight: 16
   }
 });

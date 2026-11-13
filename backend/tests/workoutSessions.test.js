@@ -3,6 +3,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import { normalizeDisplayText } from '../controllers/workoutController.js';
 
 // Mocks y entorno aislado para probar el sistema de workouts
 describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de Acceso', () => {
@@ -414,6 +415,58 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       }
       mockExercises = mockExercises.filter(e => e.id !== exId);
       return res.status(200).json({ ok: true, message: 'ejercicio eliminado' });
+    });
+
+    // 10. GET /api/workouts/exercises/:exerciseId/history (idéntico a getExerciseHistory en workoutController.js)
+    app.get('/api/workouts/exercises/:exerciseId/history', testVerifyToken, (req, res) => {
+      const { role, id: authUserId } = req.user;
+      const exId = Number(req.params.exerciseId);
+      let targetUserId = authUserId;
+
+      if (req.query.member_id) {
+        targetUserId = Number(req.query.member_id);
+      }
+
+      const ex = mockExercises.find(e => e.id === exId);
+      if (!ex) {
+        return res.status(404).json({ ok: false, error: { message: 'ejercicio no existe', code: 'EXERCISE_NOT_FOUND' } });
+      }
+
+      // Filtrar solo sesiones finalizadas (status = 'completed' o status IS NULL) y ordenar por session_date DESC, ws.id DESC, set_number ASC
+      const logs = mockSetLogs
+        .filter(sl => sl.user_id === targetUserId && sl.exercise_id === exId)
+        .map(sl => {
+          const ws = mockSessions.find(s => s.id === sl.session_id);
+          return ws ? { ...sl, session_date: ws.session_date, session_status: ws.status } : null;
+        })
+        .filter(row => row !== null && (row.session_status === 'completed' || row.session_status === null))
+        .sort((a, b) => {
+          const timeDiff = new Date(b.session_date).getTime() - new Date(a.session_date).getTime();
+          if (timeDiff !== 0) return timeDiff;
+          if (b.session_id !== a.session_id) return b.session_id - a.session_id;
+          return a.set_number - b.set_number;
+        })
+        .map(({ session_status, ...rest }) => rest);
+
+      let maxWeight = 0;
+      let totalReps = 0;
+      logs.forEach(l => {
+        if (Number(l.weight_kg) > maxWeight) maxWeight = Number(l.weight_kg);
+        totalReps += Number(l.reps_completed);
+      });
+
+      return res.status(200).json({
+        ok: true,
+        data: {
+          exercise: ex,
+          stats: {
+            total_sets_logged: logs.length,
+            personal_record_kg: maxWeight,
+            total_reps_completed: totalReps
+          },
+          logs
+        }
+      });
     });
 
     await new Promise((resolve) => {
@@ -1345,6 +1398,197 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       headers: { Authorization: `Bearer ${tokenTrainer}` }
     });
     assert.strictEqual(detailRes.status, 403);
+  });
+
+  test('28. Normalización de codificación UTF-8: repara mojibake histórico (SesiÃ³n -> Sesión, DuraciÃ³n -> Duración) sin alterar textos válidos', () => {
+    assert.strictEqual(normalizeDisplayText('SesiÃ³n de espalda'), 'Sesión de espalda');
+    assert.strictEqual(normalizeDisplayText('SesiÃ³n de pecho'), 'Sesión de pecho');
+    assert.strictEqual(normalizeDisplayText('DuraciÃ³n total'), 'Duración total');
+    assert.strictEqual(normalizeDisplayText('Ã‰xito en la sesiÃ³n'), 'Éxito en la sesión');
+    assert.strictEqual(normalizeDisplayText('Press de banca: 80 kg × 8 repeticiones'), 'Press de banca: 80 kg × 8 repeticiones');
+    assert.strictEqual(normalizeDisplayText(null), null);
+  });
+
+  test('29. Mejores marcas y evolución: distingue mayor peso levantado y mejor rendimiento peso × repeticiones sin mezclar ejercicios', () => {
+    const setsEx1 = [
+      { exercise_id: 1, weight_kg: 80, reps_completed: 4, session_date: '2026-11-10' }, // Mayor peso: 80 kg × 4 reps (vol 320)
+      { exercise_id: 1, weight_kg: 75, reps_completed: 12, session_date: '2026-11-12' } // Mejor rendimiento peso × reps: 75 kg × 12 reps (vol 900)
+    ];
+
+    let bestWeight = setsEx1[0];
+    let bestPerformance = setsEx1[0];
+
+    for (const st of setsEx1) {
+      if (st.weight_kg > bestWeight.weight_kg || (st.weight_kg === bestWeight.weight_kg && st.reps_completed > bestWeight.reps_completed)) {
+        bestWeight = st;
+      }
+      if ((st.weight_kg * st.reps_completed) > (bestPerformance.weight_kg * bestPerformance.reps_completed)) {
+        bestPerformance = st;
+      }
+    }
+
+    assert.strictEqual(bestWeight.weight_kg, 80);
+    assert.strictEqual(bestWeight.reps_completed, 4);
+    assert.strictEqual(bestPerformance.weight_kg, 75);
+    assert.strictEqual(bestPerformance.reps_completed, 12);
+  });
+
+  test('30. Agrupación por session_id en entrenamientos del mismo día (Caso real 13/11/2026: Sesión 23 y Sesión 24 de Press militar)', async () => {
+    const tokenAlice = makeToken(mockUsers[2]); // Alice (id: 3)
+
+    // Registrar ejercicio 9: Press militar
+    if (!mockExercises.some(e => e.id === 9)) {
+      mockExercises.push({ id: 9, name: 'press militar', muscle_group: 'Hombros' });
+    }
+
+    // Sesión 23 (13/11/2026 21:18:01Z) - Press militar: 10 kg × 10, 15 kg × 8, 17 kg × 6
+    mockSessions.push({
+      id: 23,
+      user_id: 3,
+      routine_id: 10,
+      session_date: '2026-11-13T21:18:01.000Z',
+      status: 'completed',
+      ended_at: '2026-11-13T21:19:05.000Z',
+      notes: 'Entrenamiento 1 hombro'
+    });
+    mockSetLogs.push(
+      { id: 25, session_id: 23, user_id: 3, exercise_id: 9, set_number: 1, weight_kg: 10, reps_completed: 10, created_at: '2026-11-13T21:18:10.000Z' },
+      { id: 26, session_id: 23, user_id: 3, exercise_id: 9, set_number: 2, weight_kg: 15, reps_completed: 8, created_at: '2026-11-13T21:18:30.000Z' },
+      { id: 27, session_id: 23, user_id: 3, exercise_id: 9, set_number: 3, weight_kg: 17, reps_completed: 6, created_at: '2026-11-13T21:18:50.000Z' }
+    );
+
+    // Sesión 24 (13/11/2026 21:19:30Z) - Press militar: 20 kg × 10, 22 kg × 10, 25 kg × 7
+    mockSessions.push({
+      id: 24,
+      user_id: 3,
+      routine_id: 10,
+      session_date: '2026-11-13T21:19:30.000Z',
+      status: 'completed',
+      ended_at: '2026-11-13T21:20:52.000Z',
+      notes: 'Entrenamiento 2 hombro'
+    });
+    mockSetLogs.push(
+      { id: 31, session_id: 24, user_id: 3, exercise_id: 9, set_number: 1, weight_kg: 20, reps_completed: 10, created_at: '2026-11-13T21:19:45.000Z' },
+      { id: 32, session_id: 24, user_id: 3, exercise_id: 9, set_number: 2, weight_kg: 22, reps_completed: 10, created_at: '2026-11-13T21:20:10.000Z' },
+      { id: 33, session_id: 24, user_id: 3, exercise_id: 9, set_number: 3, weight_kg: 25, reps_completed: 7, created_at: '2026-11-13T21:20:40.000Z' }
+    );
+
+    // Consultar endpoint GET /api/workouts/exercises/9/history
+    const res = await fetch(`${baseUrl}/api/workouts/exercises/9/history`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const json = await res.json();
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(json.data.logs.length, 6);
+
+    // Verificar orden del backend: ws.session_date DESC, ws.id DESC, sl.set_number ASC
+    assert.deepStrictEqual(
+      json.data.logs.map(l => ({ session_id: l.session_id, set_number: l.set_number })),
+      [
+        { session_id: 24, set_number: 1 },
+        { session_id: 24, set_number: 2 },
+        { session_id: 24, set_number: 3 },
+        { session_id: 23, set_number: 1 },
+        { session_id: 23, set_number: 2 },
+        { session_id: 23, set_number: 3 }
+      ]
+    );
+
+    // Aplicar exactamente la lógica de buildSessionExercisePoints (con un registro inválido sin session_id para probar que NO hace fallback a fecha)
+    const rawLogsWithMalformed = [
+      ...json.data.logs,
+      { id: 9999, session_id: null, exercise_id: 9, set_number: 1, weight_kg: 999, reps_completed: 99, session_date: '2026-11-13T22:00:00.000Z' }
+    ];
+
+    const bySession = new Map();
+    for (const log of rawLogsWithMalformed) {
+      const parsedSessionId = Number(log.session_id);
+      if (!Number.isInteger(parsedSessionId) || parsedSessionId <= 0) {
+        continue; // Descarte explícito: nunca agrupar por isoDate
+      }
+      const weight = Number(log.weight_kg);
+      const reps = Number(log.reps_completed) || 0;
+      const setVolume = Math.round(weight * reps * 100) / 100;
+      const rawDate = log.session_date || log.created_at;
+      const timestampMs = new Date(rawDate).getTime();
+      const isoDate = new Date(rawDate).toISOString().slice(0, 10);
+
+      const existing = bySession.get(parsedSessionId);
+      const setItem = {
+        id: Number(log.id),
+        setNumber: Number(log.set_number),
+        weight,
+        reps,
+        volume: setVolume
+      };
+
+      if (!existing) {
+        bySession.set(parsedSessionId, {
+          sessionId: parsedSessionId,
+          sessionTimestamp: rawDate,
+          timestampMs,
+          isoDate,
+          maxWeight: weight,
+          bestRepsAtMax: reps,
+          bestPerformanceWeight: weight,
+          bestPerformanceReps: reps,
+          bestPerformanceVolume: setVolume,
+          totalVolume: setVolume,
+          setsCount: 1,
+          sets: [setItem]
+        });
+      } else {
+        existing.setsCount += 1;
+        existing.totalVolume = Math.round((existing.totalVolume + setVolume) * 100) / 100;
+        existing.sets.push(setItem);
+        if (weight > existing.maxWeight || (weight === existing.maxWeight && reps > existing.bestRepsAtMax)) {
+          existing.maxWeight = weight;
+          existing.bestRepsAtMax = reps;
+        }
+        if (setVolume > existing.bestPerformanceVolume || (setVolume === existing.bestPerformanceVolume && weight > existing.bestPerformanceWeight)) {
+          existing.bestPerformanceWeight = weight;
+          existing.bestPerformanceReps = reps;
+          existing.bestPerformanceVolume = setVolume;
+        }
+      }
+    }
+
+    const points = Array.from(bySession.values()).sort((a, b) => {
+      if (a.timestampMs !== b.timestampMs) return a.timestampMs - b.timestampMs;
+      return a.sessionId - b.sessionId;
+    });
+
+    // 1. 2 sesiones registradas y 2 puntos independientes en el gráfico
+    assert.strictEqual(points.length, 2);
+    assert.strictEqual(points[0].sessionId, 23);
+    assert.strictEqual(points[1].sessionId, 24);
+
+    // 2. 6 series en total, separadas en 2 sesiones (3 cada una)
+    const totalSets = points.reduce((acc, p) => acc + p.setsCount, 0);
+    assert.strictEqual(totalSets, 6);
+    assert.strictEqual(points[0].setsCount, 3);
+    assert.strictEqual(points[1].setsCount, 3);
+    assert.strictEqual(points[0].sets.length, 3);
+    assert.strictEqual(points[1].sets.length, 3);
+
+    // 3. Primera sesión (Sesión 23): mejor marca 17 kg × 6, volumen total 322 kg (100 + 120 + 102)
+    assert.strictEqual(points[0].maxWeight, 17);
+    assert.strictEqual(points[0].bestRepsAtMax, 6);
+    assert.strictEqual(points[0].totalVolume, 322);
+
+    // 4. Segunda sesión (Sesión 24): mejor marca 25 kg × 7, volumen total 595 kg (200 + 220 + 175)
+    assert.strictEqual(points[1].maxWeight, 25);
+    assert.strictEqual(points[1].bestRepsAtMax, 7);
+    assert.strictEqual(points[1].totalVolume, 595);
+
+    // 5. Diferencia de peso máximo entre sesiones: +8 kg
+    const firstInPeriod = points[0];
+    const lastInPeriod = points[points.length - 1];
+    const diffInPeriod =
+      firstInPeriod && lastInPeriod && firstInPeriod.sessionId !== lastInPeriod.sessionId
+        ? Math.round((lastInPeriod.maxWeight - firstInPeriod.maxWeight) * 10) / 10
+        : 0;
+    assert.strictEqual(diffInPeriod, 8);
   });
 });
 
