@@ -1,9 +1,9 @@
+// Pantalla de registro público para crear nuevas cuentas de socio en FitManager.
 import React, { useState } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -20,7 +20,9 @@ import {
   Card,
   StatusBanner
 } from '../../Modules/components/index';
+import { styles } from './RegisterScreen.styles';
 
+// Pantalla con formulario validado para registrar un nuevo socio.
 export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
   const { colors, isDark, toggleTheme } = useTheme();
   const { login } = useAuth();
@@ -74,9 +76,9 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
       }
     } catch (error) {
       if (error.status === 409 || error.code === 'EMAIL_ALREADY_EXISTS') {
-        setErrorMessage('el correo electronico ya esta registrado. intenta iniciar sesion');
+        setErrorMessage('el correo electrónico ya está registrado. intentá iniciar sesión');
       } else if (error.code === 'NETWORK_ERROR' || error.code === 'TIMEOUT_ERROR') {
-        setErrorMessage('no se pudo conectar con el servidor. verifica que el backend este activo');
+        setErrorMessage('no se pudo conectar con el servidor. verificá que el backend esté activo');
       } else {
         setErrorMessage(error.message || 'error inesperado al registrar usuario');
       }
@@ -152,7 +154,7 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
               render={({ field: { onChange, value } }) => (
                 <Input
                   label="nombre y apellido"
-                  placeholder="ej. juan perez"
+                  placeholder="ej. juan pérez"
                   autoCapitalize="words"
                   value={value}
                   onChangeText={onChange}
@@ -165,15 +167,15 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
               control={control}
               name="email"
               rules={{
-                required: 'el correo electronico es obligatorio',
+                required: 'el correo electrónico es obligatorio',
                 pattern: {
                   value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                  message: 'formato de correo electronico invalido'
+                  message: 'formato de correo electrónico inválido'
                 }
               }}
               render={({ field: { onChange, value } }) => (
                 <Input
-                  label="correo electronico"
+                  label="correo electrónico"
                   placeholder="ejemplo@correo.com"
                   keyboardType="email-address"
                   autoCapitalize="none"
@@ -188,16 +190,16 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
               control={control}
               name="password"
               rules={{
-                required: 'la contrasena es obligatoria',
+                required: 'la contraseña es obligatoria',
                 minLength: {
                   value: 6,
-                  message: 'la contrasena debe tener al menos 6 caracteres'
+                  message: 'la contraseña debe tener al menos 6 caracteres'
                 }
               }}
               render={({ field: { onChange, value } }) => (
                 <Input
-                  label="contrasena (min. 6 caracteres)"
-                  placeholder="crea tu contrasena"
+                  label="contraseña (mín. 6 caracteres)"
+                  placeholder="creá tu contraseña"
                   isPassword
                   value={value}
                   onChangeText={onChange}
@@ -210,14 +212,14 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
               control={control}
               name="confirmPassword"
               rules={{
-                required: 'confirma tu contrasena',
+                required: 'confirmá tu contraseña',
                 validate: (value) =>
-                  value === passwordValue || 'las contrasenas no coinciden'
+                  value === passwordValue || 'las contraseñas no coinciden'
               }}
               render={({ field: { onChange, value } }) => (
                 <Input
-                  label="confirmar contrasena"
-                  placeholder="repite tu contrasena"
+                  label="confirmar contraseña"
+                  placeholder="repetí tu contraseña"
                   isPassword
                   value={value}
                   onChangeText={onChange}
@@ -238,11 +240,11 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
           {/* pie de pantalla hacia login */}
           <View style={styles.footer}>
             <Text style={[styles.footerText, { color: colors.textSecondary }]}>
-              ¿ya tenes una cuenta registrada?
+              ¿ya tenés una cuenta registrada?
             </Text>
             <TouchableOpacity onPress={() => navigation.navigate('Login')}>
               <Text style={[styles.footerLink, { color: colors.primary }]}>
-                inicia sesion
+                iniciá sesión
               </Text>
             </TouchableOpacity>
           </View>
@@ -251,76 +253,5 @@ export function RegisterScreen({ navigation }: ScreenProps<'Register'>) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  keyboardContainer: {
-    flex: 1
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 24
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12
-  },
-  backButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  backText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  titleSection: {
-    marginBottom: 10
-  },
-  brandLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 2
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  subtitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 2
-  },
-  formCard: {
-    marginTop: 4,
-    padding: 14
-  },
-  submitBtn: {
-    marginTop: 8
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 18,
-    marginBottom: 10
-  },
-  footerText: {
-    fontSize: 13
-  },
-  footerLink: {
-    fontSize: 13,
-    fontWeight: '700'
-  }
-});
 
 export default RegisterScreen;

@@ -1,12 +1,14 @@
+// Muestra el listado de usuarios permitiendo buscar, activar/desactivar cuentas y cambiar roles.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   FlatList,
   TouchableOpacity,
-  RefreshControl
+  RefreshControl,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext';
@@ -22,10 +24,15 @@ import {
   EmptyState,
   ConfirmModal
 } from '../../Modules/components/index';
+import { styles } from './UsersScreen.styles';
 
+// Pantalla de gestión de usuarios para activar/desactivar cuentas y asignar roles.
 export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
   const { colors } = useTheme();
   const { token, user: currentUser } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 768;
+  const numColumns = Platform.OS === 'web' && width >= 960 ? 2 : 1;
 
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -204,7 +211,7 @@ export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
     const isAdmin = item.role === 'admin';
 
     return (
-      <Card style={styles.userCard}>
+      <Card style={[styles.userCard, numColumns > 1 && { flex: 1, justifyContent: 'space-between' }]}>
         <View style={styles.userCardTop}>
           <View style={styles.userInfo}>
             <Text style={[styles.userName, { color: colors.text }]}>
@@ -219,7 +226,7 @@ export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
 
         {/* selector de rol para usuarios no administradores */}
         {!isAdmin && (
-          <View style={styles.roleSelectorSection}>
+          <View style={[styles.roleSelectorSection, { borderTopColor: colors.border }]}>
             <Text style={[styles.roleSelectorLabel, { color: colors.textMuted }]}>
               CAMBIAR ROL:
             </Text>
@@ -240,7 +247,7 @@ export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
                 <Text
                   style={[
                     styles.roleChipText,
-                    { color: item.role === 'member' ? '#000000' : colors.textSecondary }
+                    { color: item.role === 'member' ? colors.primaryText : colors.textSecondary }
                   ]}
                 >
                   SOCIO
@@ -313,23 +320,25 @@ export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
-      {/* barra superior fija y limpia */}
-      <View style={styles.topNavBar}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-          accessibilityRole="button"
-          accessibilityLabel="volver al panel"
-        >
-          <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
-            ← VOLVER
+      {/* barra superior fija y limpia (en web de escritorio la provee WebContainer) */}
+      {!isDesktopWeb && (
+        <View style={[styles.topNavBar, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            accessibilityRole="button"
+            accessibilityLabel="volver al panel"
+          >
+            <Text style={[styles.backBtnText, { color: colors.textSecondary }]}>
+              ← VOLVER
+            </Text>
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+            USUARIOS DEL SISTEMA
           </Text>
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-          USUARIOS DEL SISTEMA
-        </Text>
-        <View style={styles.navBarSpacer} />
-      </View>
+          <View style={styles.navBarSpacer} />
+        </View>
+      )}
 
       <View style={styles.container}>
 
@@ -348,6 +357,9 @@ export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
           <LoadingSpinner message="cargando usuarios..." />
         ) : (
           <FlatList
+            key={String(numColumns)}
+            numColumns={numColumns}
+            columnWrapperStyle={numColumns > 1 ? { gap: 14 } : undefined}
             data={filteredUsers}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderUserItem}
@@ -399,133 +411,5 @@ export function UsersScreen({ navigation }: ScreenProps<'Users'>) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  topNavBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)'
-  },
-  backBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  backBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  navBarSpacer: {
-    width: 70
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 8
-  },
-  searchInput: {
-    marginVertical: 4
-  },
-  listContent: {
-    flexGrow: 1,
-    paddingBottom: 36
-  },
-  userCard: {
-    padding: 12,
-    marginVertical: 4
-  },
-  userCardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start'
-  },
-  userInfo: {
-    flex: 1,
-    paddingRight: 8
-  },
-  userName: {
-    fontSize: 14,
-    fontWeight: '800'
-  },
-  userEmail: {
-    fontSize: 12,
-    marginTop: 1
-  },
-  roleSelectorSection: {
-    marginTop: 8,
-    paddingTop: 6,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)'
-  },
-  roleSelectorLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 5
-  },
-  roleChipsRow: {
-    flexDirection: 'row',
-    gap: 6
-  },
-  roleChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1
-  },
-  roleChipText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  divider: {
-    height: 1,
-    marginVertical: 8
-  },
-  userCardBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  statusIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6
-  },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  toggleBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  toggleBtnText: {
-    fontSize: 11,
-    fontWeight: '800'
-  }
-});
 
 export default UsersScreen;

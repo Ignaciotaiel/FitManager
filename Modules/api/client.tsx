@@ -1,3 +1,4 @@
+// Cliente HTTP centralizado con manejo de cabeceras JWT, tiempos de espera y errores de red.
 import { Platform } from 'react-native';
 import { ApiResponse } from '../types';
 
@@ -24,11 +25,36 @@ function getDefaultApiUrl(): string {
   return 'http://127.0.0.1:3000/api';
 }
 
+// Normaliza la URL base de la API garantizando que termine en el prefijo /api.
+function normalizeApiUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+}
+
+// en web, cuando la app se abre desde localhost (desarrollo con `expo start --web`),
+// se usa el backend local. se puede cambiar con EXPO_PUBLIC_WEB_API_URL.
+// no afecta a android/ios ni a la url de produccion usada por la apk.
+function getWebLocalApiUrl(): string | null {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+
+  const webUrl = process.env.EXPO_PUBLIC_WEB_API_URL;
+  if (webUrl && webUrl.trim().length > 0) return normalizeApiUrl(webUrl);
+
+  const host = window.location?.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return 'http://localhost:3000/api';
+  }
+  return null;
+}
+
+// Determina la URL base de la API según la plataforma activa y las variables de entorno.
 function getApiBaseUrl(): string {
+  const webLocalUrl = getWebLocalApiUrl();
+  if (webLocalUrl) return webLocalUrl;
+
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
   if (envUrl && envUrl.trim().length > 0) {
-    const trimmed = envUrl.trim().replace(/\/+$/, '');
-    return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+    return normalizeApiUrl(envUrl);
   }
   return getDefaultApiUrl();
 }
@@ -103,7 +129,7 @@ export async function apiRequest<T = any>(endpoint: string, options: ApiRequestO
     }
 
     if (!response.ok) {
-      const errorMsg = data?.error?.message || data?.message || `error en la peticion (codigo ${response.status})`;
+      const errorMsg = data?.error?.message || data?.message || `error en la petición (código ${response.status})`;
       const apiError: ApiCustomError = new Error(errorMsg);
       apiError.status = response.status;
       apiError.code = data?.error?.code || 'API_ERROR';
@@ -118,7 +144,7 @@ export async function apiRequest<T = any>(endpoint: string, options: ApiRequestO
       throw error;
     }
     if (error.message?.includes('Network request failed') || error.message?.includes('fetch failed')) {
-      const netError: ApiCustomError = new Error('no se pudo conectar con el servidor. verifica tu conexion a internet o la url del backend');
+      const netError: ApiCustomError = new Error('no se pudo conectar con el servidor. verificá tu conexión a internet o la URL del backend');
       netError.code = 'NETWORK_ERROR';
       netError.status = 0;
       throw netError;

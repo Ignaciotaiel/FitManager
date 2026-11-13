@@ -1,12 +1,14 @@
+// Muestra el panel principal del administrador con indicadores en tiempo real y herramientas de gestión.
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   RefreshControl,
-  TouchableOpacity
+  TouchableOpacity,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +17,7 @@ import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { userService } from '../../Modules/users/userService';
 import { adminService } from '../../Modules/admin/adminService';
+import { routineService } from '../../Modules/routines/routineService';
 import {
   DashboardHeader,
   Card,
@@ -22,6 +25,7 @@ import {
   StatusBanner,
   LoadingSpinner
 } from '../../Modules/components/index';
+import { styles } from './AdminDashboardScreen.styles';
 
 interface AdminStats {
   totalUsers: number;
@@ -29,13 +33,17 @@ interface AdminStats {
   inactiveUsers: number;
   trainersCount: number;
   membersCount: number;
+  routinesCount: number | null;
   pendingIncidents: number | null;
   activeNotifications: number | null;
 }
 
+// Pantalla principal del administrador con métricas globales y accesos a cada módulo.
 export function AdminDashboardScreen({ navigation }: ScreenProps<'AdminDashboard'>) {
   const { colors } = useTheme();
   const { token } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= 900;
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -46,6 +54,7 @@ export function AdminDashboardScreen({ navigation }: ScreenProps<'AdminDashboard
     inactiveUsers: 0,
     trainersCount: 0,
     membersCount: 0,
+    routinesCount: null,
     pendingIncidents: null,
     activeNotifications: null
   });
@@ -54,10 +63,11 @@ export function AdminDashboardScreen({ navigation }: ScreenProps<'AdminDashboard
   const loadSystemStats = useCallback(async () => {
     try {
       setErrorMessage(null);
-      const [usersResult, incidentsResult, notificationsResult] = await Promise.allSettled([
+      const [usersResult, incidentsResult, notificationsResult, routinesResult] = await Promise.allSettled([
         userService.getUsers(token),
         adminService.getIncidents({}, token),
-        adminService.getNotifications(token)
+        adminService.getNotifications(token),
+        routineService.getRoutines(token)
       ]);
 
       let nextTotal = 0;
@@ -103,12 +113,21 @@ export function AdminDashboardScreen({ navigation }: ScreenProps<'AdminDashboard
         }
       }
 
+      let nextRoutinesCount: number | null = null;
+      if (routinesResult.status === 'fulfilled') {
+        const routList = routinesResult.value?.data?.routines;
+        if (Array.isArray(routList)) {
+          nextRoutinesCount = routList.length;
+        }
+      }
+
       setStats({
         totalUsers: nextTotal,
         activeUsers: nextActive,
         inactiveUsers: nextInactive,
         trainersCount: nextTrainers,
         membersCount: nextMembers,
+        routinesCount: nextRoutinesCount,
         pendingIncidents: nextPendingIncidents,
         activeNotifications: nextActiveNotifications
       });
@@ -371,63 +390,94 @@ export function AdminDashboardScreen({ navigation }: ScreenProps<'AdminDashboard
               </Text>
             </View>
 
-            <Card style={styles.toolCard}>
-              <View style={styles.toolTopRow}>
-                <View
-                  style={[
-                    styles.toolIconBox,
-                    {
-                      backgroundColor: withAlpha(colors.primary, 0.14),
-                      borderColor: withAlpha(colors.primary, 0.35)
-                    }
-                  ]}
-                >
-                  <Ionicons name="people-outline" size={22} color={colors.primary} />
+            <View style={isDesktop ? styles.cardsGridDesktop : undefined}>
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.primary, 0.14),
+                        borderColor: withAlpha(colors.primary, 0.35)
+                      }
+                    ]}
+                  >
+                    <Ionicons name="people-outline" size={22} color={colors.primary} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Gestión de usuarios y roles
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Consultá el listado general, buscá por nombre o correo, asigná roles y activá o desactivá cuentas.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.toolInfoCol}>
-                  <Text style={[styles.toolTitle, { color: colors.text }]}>
-                    Gestión de usuarios y roles
-                  </Text>
-                  <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
-                    Consultá el listado general, buscá por nombre o correo, asigná roles y activá o desactivá cuentas.
-                  </Text>
-                </View>
-              </View>
-              <Button
-                title="VER LISTADO DE USUARIOS"
-                variant="primary"
-                onPress={() => navigation.navigate('Users')}
-              />
-            </Card>
+                <Button
+                  title="VER LISTADO DE USUARIOS"
+                  variant="primary"
+                  onPress={() => navigation.navigate('Users')}
+                />
+              </Card>
 
-            <Card style={styles.toolCard}>
-              <View style={styles.toolTopRow}>
-                <View
-                  style={[
-                    styles.toolIconBox,
-                    {
-                      backgroundColor: withAlpha(colors.primary, 0.12),
-                      borderColor: colors.border
-                    }
-                  ]}
-                >
-                  <Ionicons name="barbell-outline" size={22} color={colors.primary} />
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.info, 0.14),
+                        borderColor: colors.border
+                      }
+                    ]}
+                  >
+                    <Ionicons name="clipboard-outline" size={22} color={colors.info} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Supervisión de rutinas{stats.routinesCount !== null ? ` (${stats.routinesCount})` : ''}
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Consultá las rutinas creadas por cada entrenador, los socios asignados y los ejercicios incluidos.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.toolInfoCol}>
-                  <Text style={[styles.toolTitle, { color: colors.text }]}>
-                    Catálogo de ejercicios y técnicas
-                  </Text>
-                  <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
-                    Administrá la biblioteca global de ejercicios disponibles para las rutinas del gimnasio.
-                  </Text>
+                <Button
+                  title="SUPERVISAR RUTINAS DEL GIMNASIO"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('AdminRoutines')}
+                />
+              </Card>
+
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.primary, 0.12),
+                        borderColor: colors.border
+                      }
+                    ]}
+                  >
+                    <Ionicons name="barbell-outline" size={22} color={colors.primary} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Catálogo de ejercicios y técnicas
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Administrá la biblioteca global de ejercicios disponibles para las rutinas del gimnasio.
+                    </Text>
+                  </View>
                 </View>
-              </View>
-              <Button
-                title="VER CATÁLOGO DE EJERCICIOS"
-                variant="secondary"
-                onPress={() => navigation.navigate('Exercises')}
-              />
-            </Card>
+                <Button
+                  title="VER CATÁLOGO DE EJERCICIOS"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('Exercises')}
+                />
+              </Card>
+            </View>
 
             {/* D. Herramientas operativas y de auditoria */}
             <View style={[styles.sectionHeaderRow, { marginTop: 16 }]}>
@@ -436,312 +486,128 @@ export function AdminDashboardScreen({ navigation }: ScreenProps<'AdminDashboard
               </Text>
             </View>
 
-            <Card style={styles.toolCard}>
-              <View style={styles.toolTopRow}>
-                <View
-                  style={[
-                    styles.toolIconBox,
-                    {
-                      backgroundColor: withAlpha(colors.info, 0.14),
-                      borderColor: colors.border
-                    }
-                  ]}
-                >
-                  <Ionicons name="pulse-outline" size={22} color={colors.info} />
+            <View style={isDesktop ? styles.cardsGridDesktop : undefined}>
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.info, 0.14),
+                        borderColor: colors.border
+                      }
+                    ]}
+                  >
+                    <Ionicons name="pulse-outline" size={22} color={colors.info} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Registro de actividad
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Auditá las acciones realizadas en FitManager filtrando por usuario, categoría y período de fechas.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.toolInfoCol}>
-                  <Text style={[styles.toolTitle, { color: colors.text }]}>
-                    Registro de actividad
-                  </Text>
-                  <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
-                    Auditá las acciones realizadas en FitManager filtrando por usuario, categoría y período de fechas.
-                  </Text>
-                </View>
-              </View>
-              <Button
-                title="VER REGISTRO DE ACTIVIDAD"
-                variant="secondary"
-                onPress={() => navigation.navigate('ActivityLog')}
-              />
-            </Card>
+                <Button
+                  title="VER REGISTRO DE ACTIVIDAD"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('ActivityLog')}
+                />
+              </Card>
 
-            <Card style={styles.toolCard}>
-              <View style={styles.toolTopRow}>
-                <View
-                  style={[
-                    styles.toolIconBox,
-                    {
-                      backgroundColor: withAlpha(colors.primary, 0.14),
-                      borderColor: colors.border
-                    }
-                  ]}
-                >
-                  <Ionicons name="notifications-outline" size={22} color={colors.primary} />
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.primary, 0.14),
+                        borderColor: colors.border
+                      }
+                    ]}
+                  >
+                    <Ionicons name="notifications-outline" size={22} color={colors.primary} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Centro de notificaciones
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Publicá y administrá avisos internos dirigidos a todos los usuarios, entrenadores o socios.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.toolInfoCol}>
-                  <Text style={[styles.toolTitle, { color: colors.text }]}>
-                    Centro de notificaciones
-                  </Text>
-                  <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
-                    Publicá y administrá avisos internos dirigidos a todos los usuarios, entrenadores o socios.
-                  </Text>
-                </View>
-              </View>
-              <Button
-                title="GESTIONAR NOTIFICACIONES"
-                variant="secondary"
-                onPress={() => navigation.navigate('Notifications')}
-              />
-            </Card>
+                <Button
+                  title="GESTIONAR NOTIFICACIONES"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('Notifications')}
+                />
+              </Card>
 
-            <Card style={styles.toolCard}>
-              <View style={styles.toolTopRow}>
-                <View
-                  style={[
-                    styles.toolIconBox,
-                    {
-                      backgroundColor: withAlpha(colors.warning, 0.14),
-                      borderColor: colors.border
-                    }
-                  ]}
-                >
-                  <Ionicons name="construct-outline" size={22} color={colors.warning} />
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.warning, 0.14),
+                        borderColor: colors.border
+                      }
+                    ]}
+                  >
+                    <Ionicons name="construct-outline" size={22} color={colors.warning} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Gestión de incidencias
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Registrá y hacé seguimiento de inconvenientes en equipos o instalaciones hasta su resolución.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.toolInfoCol}>
-                  <Text style={[styles.toolTitle, { color: colors.text }]}>
-                    Gestión de incidencias
-                  </Text>
-                  <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
-                    Registrá y hacé seguimiento de inconvenientes en equipos o instalaciones hasta su resolución.
-                  </Text>
-                </View>
-              </View>
-              <Button
-                title="GESTIONAR INCIDENCIAS"
-                variant="secondary"
-                onPress={() => navigation.navigate('Incidents')}
-              />
-            </Card>
+                <Button
+                  title="GESTIONAR INCIDENCIAS"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('Incidents')}
+                />
+              </Card>
 
-            <Card style={styles.toolCard}>
-              <View style={styles.toolTopRow}>
-                <View
-                  style={[
-                    styles.toolIconBox,
-                    {
-                      backgroundColor: withAlpha(colors.success, 0.14),
-                      borderColor: colors.border
-                    }
-                  ]}
-                >
-                  <Ionicons name="download-outline" size={22} color={colors.success} />
+              <Card style={[styles.toolCard, isDesktop && styles.toolCardDesktop]}>
+                <View style={styles.toolTopRow}>
+                  <View
+                    style={[
+                      styles.toolIconBox,
+                      {
+                        backgroundColor: withAlpha(colors.success, 0.14),
+                        borderColor: colors.border
+                      }
+                    ]}
+                  >
+                    <Ionicons name="download-outline" size={22} color={colors.success} />
+                  </View>
+                  <View style={styles.toolInfoCol}>
+                    <Text style={[styles.toolTitle, { color: colors.text }]}>
+                      Exportación de informes CSV
+                    </Text>
+                    <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
+                      Descargá o compartí archivos CSV reales de usuarios, ejercicios, rutinas, actividad e incidencias.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.toolInfoCol}>
-                  <Text style={[styles.toolTitle, { color: colors.text }]}>
-                    Exportación de informes CSV
-                  </Text>
-                  <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>
-                    Descargá o compartí archivos CSV reales de usuarios, ejercicios, rutinas, actividad e incidencias.
-                  </Text>
-                </View>
-              </View>
-              <Button
-                title="EXPORTAR INFORMES CSV"
-                variant="secondary"
-                onPress={() => navigation.navigate('ReportsExport')}
-              />
-            </Card>
+                <Button
+                  title="EXPORTAR INFORMES CSV"
+                  variant="secondary"
+                  onPress={() => navigation.navigate('ReportsExport')}
+                />
+              </Card>
+            </View>
           </>
         )}
       </ScrollView>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  scrollContent: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 32
-  },
-  heroCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16,
-    marginBottom: 12
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    gap: 8
-  },
-  areaBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 1
-  },
-  areaBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.7
-  },
-  notificationsQuickBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1
-  },
-  notificationsQuickText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  quickCountPill: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    paddingHorizontal: 5,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  quickCountText: {
-    fontSize: 10,
-    fontWeight: '900'
-  },
-  heroTitle: {
-    fontSize: 21,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  heroSubtitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 4
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    marginBottom: 8
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  sectionHint: {
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  kpiRow: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  kpiCard: {
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 6,
-    marginVertical: 2
-  },
-  kpiIconCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6
-  },
-  kpiNumber: {
-    fontSize: 22,
-    fontWeight: '900'
-  },
-  kpiLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginTop: 3,
-    textAlign: 'center'
-  },
-  kpiSecondaryRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8
-  },
-  secondaryKpiCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    gap: 10
-  },
-  secondaryKpiIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  secondaryKpiTextCol: {
-    flex: 1
-  },
-  secondaryKpiNumber: {
-    fontSize: 18,
-    fontWeight: '900'
-  },
-  secondaryKpiLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-    marginTop: 1
-  },
-  toolCard: {
-    padding: 15,
-    marginVertical: 6,
-    borderRadius: 14
-  },
-  toolTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    marginBottom: 10
-  },
-  toolIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  toolInfoCol: {
-    flex: 1
-  },
-  toolTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: 0.2
-  },
-  toolDesc: {
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 3
-  }
-});
 
 export default AdminDashboardScreen;

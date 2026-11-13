@@ -33,7 +33,9 @@ export interface AdminNotification {
   title: string;
   content: string;
   target_role: NotificationTarget;
-  is_active: number | boolean;
+  is_active?: number | boolean;
+  is_read?: boolean;
+  read_at?: string | null;
   created_by?: number;
   created_by_name?: string | null;
   created_at: string;

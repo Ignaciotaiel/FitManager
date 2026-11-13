@@ -1,3 +1,4 @@
+// Configura e inicia el servidor Express, CORS, rutas de la API y verificación de salud.
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -16,9 +17,27 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+// CORS: por defecto se mantiene el comportamiento actual (origin '*', usado por la apk y produccion).
+// si se define CORS_ALLOWED_ORIGINS (lista separada por comas) se activa una lista blanca:
+// solo esos origenes, los de desarrollo local (localhost / 127.0.0.1) y peticiones sin Origin (apps moviles).
+const LOCAL_ORIGIN_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const corsOrigin = allowedOrigins.length === 0
+  ? '*'
+  : (origin, callback) => {
+      if (!origin || LOCAL_ORIGIN_REGEX.test(origin) || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    };
+
 // middlewares globales
 app.use(cors({
-  origin: '*',
+  origin: corsOrigin,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));

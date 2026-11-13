@@ -1,3 +1,4 @@
+// Define las rutas públicas y protegidas de autenticación (/api/auth).
 import { Router } from 'express';
 import {
   register,
@@ -7,6 +8,7 @@ import {
   setupFirstAdmin,
   getCurrentUser,
   oauthGoogle,
+  oauthGoogleCallback,
   verifyGoogleAuth,
   oauthGithub,
   oauthGithubCallback,
@@ -40,6 +42,7 @@ router.get('/me', verifyToken, getCurrentUser);
 
 // rutas arquitectonicas y de verificacion para oauth
 router.get('/google', oauthGoogle);
+router.get('/google/callback', oauthGoogleCallback);
 router.post('/google/verify', verifyGoogleAuth);
 router.get('/github', oauthGithub);
 router.get('/github/callback', oauthGithubCallback);

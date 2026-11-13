@@ -1,6 +1,9 @@
+// Barra horizontal de filtros seleccionables tipo píldora.
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
+import { styles } from './FilterChips.styles';
 
 export interface ChipOption<T extends string | number | null> {
   value: T;
@@ -39,7 +42,7 @@ export function FilterChips<T extends string | number | null>({
                 styles.chip,
                 {
                   borderColor: selected ? colors.primary : colors.border,
-                  backgroundColor: selected ? 'rgba(57, 255, 20, 0.12)' : colors.surface
+                  backgroundColor: selected ? withAlpha(colors.primary, 0.14) : colors.surface
                 }
               ]}
             >
@@ -53,34 +56,6 @@ export function FilterChips<T extends string | number | null>({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  wrapper: {
-    marginVertical: 4
-  },
-  label: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 5,
-    textTransform: 'uppercase'
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 6
-  },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  chipText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.4
-  }
-});
 
 export default FilterChips;
 

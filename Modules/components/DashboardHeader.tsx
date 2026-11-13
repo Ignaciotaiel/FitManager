@@ -1,21 +1,40 @@
+// Encabezado superior para paneles móviles con saludo, rol, cambio de tema y cierre de sesión.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  Modal,
+  Pressable,
+  Platform,
+  useWindowDimensions
+} from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
 import { useAuth } from '../../contexto/authContext';
 import RoleBadge from './RoleBadge';
 import ConfirmModal from './ConfirmModal';
+import { styles } from './DashboardHeader.styles';
 
 export interface DashboardHeaderProps {
   title?: string;
   subtitle?: string;
 }
 
+// Renderiza el encabezado del panel en dispositivos móviles y gestiona el cierre de sesión.
 export function DashboardHeader({ title, subtitle }: DashboardHeaderProps) {
   const { colors, isDark, toggleTheme } = useTheme();
   const { user, exitApp, logout } = useAuth();
+  const { width } = useWindowDimensions();
   const [menuVisible, setMenuVisible] = useState<boolean>(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
   const [loggingOut, setLoggingOut] = useState<boolean>(false);
+
+  // En navegador de escritorio (>= 768px), la barra lateral y el encabezado superior ya muestran
+  // el perfil, rol, cambio de tema y cierre de sesion. Evitamos duplicarlos.
+  const isDesktopWeb = Platform.OS === 'web' && width >= 768;
+  if (isDesktopWeb) {
+    return null;
+  }
 
   const handleConfirmLogout = async () => {
     try {
@@ -142,117 +161,6 @@ export function DashboardHeader({ title, subtitle }: DashboardHeaderProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    paddingTop: 4,
-    paddingBottom: 6,
-    marginBottom: 8
-  },
-  profileRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  avatarAndInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    paddingRight: 12
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12
-  },
-  avatarInitial: {
-    fontSize: 18,
-    fontWeight: '900'
-  },
-  userTextCol: {
-    flex: 1,
-    justifyContent: 'center'
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: 3
-  },
-  badge: {
-    marginTop: 1
-  },
-  menuTriggerBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  menuTriggerDots: {
-    fontSize: 18,
-    fontWeight: '900'
-  },
-  titleSection: {
-    marginTop: 16,
-    marginBottom: 4
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: '900',
-    letterSpacing: 0.3
-  },
-  subtitle: {
-    fontSize: 13,
-    marginTop: 3,
-    lineHeight: 18
-  },
-  menuBackdrop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24
-  },
-  menuModal: {
-    width: '100%',
-    maxWidth: 320,
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16
-  },
-  menuHeader: {
-    paddingBottom: 8
-  },
-  menuTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  menuSub: {
-    fontSize: 12,
-    marginTop: 2
-  },
-  menuDivider: {
-    height: 1,
-    marginVertical: 10
-  },
-  menuItem: {
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8
-  },
-  menuItemDanger: {
-    marginTop: 4
-  },
-  menuItemText: {
-    fontSize: 14,
-    fontWeight: '700'
-  }
-});
 
 export default DashboardHeader;
 

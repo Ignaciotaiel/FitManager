@@ -1,3 +1,4 @@
+// Pruebas automatizadas del flujo de verificación de correo electrónico en el registro.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';

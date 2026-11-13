@@ -1,3 +1,4 @@
+// Configura la pila de navegación exclusiva para el rol de entrenador.
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TrainerDashboardScreen } from '../../Pages/trainer/TrainerDashboardScreen';
@@ -11,6 +12,7 @@ import type { TrainerStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<TrainerStackParamList>();
 
+// Define las pantallas disponibles dentro del flujo de navegación del entrenador.
 export function TrainerNavigator() {
   const { colors } = useTheme();
 

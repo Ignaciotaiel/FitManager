@@ -1,3 +1,4 @@
+// Controladores administrativos para registro de actividad, avisos, incidencias y exportación de datos.
 import pool from '../config/db.js';
 import { logActivity } from '../services/activityLogService.js';
 
@@ -15,6 +16,7 @@ function safeParseMetadata(raw) {
   }
 }
 
+// Obtiene el historial de actividad administrativa aplicando filtros por usuario, categoría y fechas.
 export async function getActivityLogs(req, res, next) {
   try {
     const { userId, category, startDate, endDate, limit = 50, offset = 0 } = req.query;
@@ -125,6 +127,7 @@ export async function listNotifications(req, res, next) {
   }
 }
 
+// Crea un nuevo aviso interno y registra la acción en el historial de actividad.
 export async function createNotification(req, res, next) {
   try {
     const { title, content, target_role = 'all' } = req.body;
@@ -178,6 +181,7 @@ export async function createNotification(req, res, next) {
   }
 }
 
+// Actualiza el contenido, destinatarios o visibilidad de una notificación existente.
 export async function updateNotification(req, res, next) {
   try {
     const { id } = req.params;
@@ -246,6 +250,7 @@ export async function updateNotification(req, res, next) {
   }
 }
 
+// Elimina una notificación administrativa y registra la baja en auditoría.
 export async function deleteNotification(req, res, next) {
   try {
     const { id } = req.params;
@@ -281,22 +286,128 @@ export async function deleteNotification(req, res, next) {
   }
 }
 
-// Endpoint público/autenticado para que cualquier usuario vea notificaciones dirigidas a su rol
+let notificationReadsTableEnsured = false;
+
+// Asegura que la tabla de control individual de avisos leídos exista en la base de datos.
+async function ensureNotificationReadsTable() {
+  if (notificationReadsTableEnsured) return;
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS notification_reads (
+      id INT(11) NOT NULL AUTO_INCREMENT,
+      notification_id INT(11) NOT NULL,
+      user_id INT(11) NOT NULL,
+      read_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_notification_user (notification_id, user_id),
+      INDEX idx_notif_reads_user (user_id),
+      INDEX idx_notif_reads_notification (notification_id),
+      CONSTRAINT fk_notif_reads_notification FOREIGN KEY (notification_id) REFERENCES admin_notifications (id) ON DELETE CASCADE,
+      CONSTRAINT fk_notif_reads_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+  notificationReadsTableEnsured = true;
+}
+
+// Endpoint autenticado para que cualquier usuario vea notificaciones dirigidas a su rol y su estado de lectura individual.
 export async function getActiveNotificationsForUser(req, res, next) {
   try {
+    await ensureNotificationReadsTable();
+    const userId = Number(req.user?.id || 0);
     const userRole = req.user?.role || 'member';
 
-    const [notifications] = await pool.execute(
-      `SELECT id, title, content, target_role, created_at 
-       FROM admin_notifications 
-       WHERE is_active = 1 AND (target_role = 'all' OR target_role = ?)
-       ORDER BY created_at DESC`,
-      [userRole]
+    const [rows] = await pool.execute(
+      `SELECT 
+         n.id,
+         n.title,
+         n.content,
+         n.target_role,
+         n.created_at,
+         nr.read_at
+       FROM admin_notifications n
+       LEFT JOIN notification_reads nr
+         ON nr.notification_id = n.id AND nr.user_id = ?
+       WHERE n.is_active = 1 AND (n.target_role = 'all' OR n.target_role = ?)
+       ORDER BY n.created_at DESC`,
+      [userId, userRole]
     );
+
+    const notifications = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      target_role: row.target_role,
+      created_at: row.created_at,
+      is_read: Boolean(row.read_at),
+      read_at: row.read_at || null
+    }));
+
+    const unreadCount = notifications.reduce((acc, item) => acc + (item.is_read ? 0 : 1), 0);
 
     return res.status(200).json({
       ok: true,
-      data: { notifications }
+      data: {
+        notifications,
+        unread_count: unreadCount
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Registra como leídos los avisos activos correspondientes al usuario autenticado de forma individual.
+export async function markNotificationsAsRead(req, res, next) {
+  try {
+    await ensureNotificationReadsTable();
+    const userId = Number(req.user?.id || 0);
+    const userRole = req.user?.role || 'member';
+    const rawIds = Array.isArray(req.body?.notificationIds) ? req.body.notificationIds : null;
+
+    let sql = `
+      SELECT id
+      FROM admin_notifications
+      WHERE is_active = 1 AND (target_role = 'all' OR target_role = ?)
+    `;
+    const params = [userRole];
+
+    if (rawIds && rawIds.length > 0) {
+      const validIds = rawIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0);
+      if (validIds.length > 0) {
+        const placeholders = validIds.map(() => '?').join(', ');
+        sql += ` AND id IN (${placeholders})`;
+        params.push(...validIds);
+      }
+    }
+
+    const [activeRows] = await pool.execute(sql, params);
+
+    for (const row of activeRows) {
+      await pool.execute(
+        'INSERT IGNORE INTO notification_reads (notification_id, user_id, read_at) VALUES (?, ?, NOW())',
+        [row.id, userId]
+      );
+    }
+
+    const [unreadRows] = await pool.execute(
+      `SELECT COUNT(*) AS unread_count
+       FROM admin_notifications n
+       LEFT JOIN notification_reads nr
+         ON nr.notification_id = n.id AND nr.user_id = ?
+       WHERE n.is_active = 1
+         AND (n.target_role = 'all' OR n.target_role = ?)
+         AND nr.id IS NULL`,
+      [userId, userRole]
+    );
+
+    const unreadCount = Number(unreadRows[0]?.unread_count || 0);
+
+    return res.status(200).json({
+      ok: true,
+      message: 'Avisos marcados como leídos',
+      data: {
+        marked_count: activeRows.length,
+        unread_count: unreadCount
+      }
     });
   } catch (error) {
     next(error);
@@ -354,6 +465,7 @@ export async function listIncidents(req, res, next) {
   }
 }
 
+// Registra una nueva incidencia operativa o de mantenimiento en el gimnasio.
 export async function createIncident(req, res, next) {
   try {
     const { title, description, category = 'other' } = req.body;
@@ -407,6 +519,7 @@ export async function createIncident(req, res, next) {
   }
 }
 
+// Actualiza los datos, estado o notas de resolución de una incidencia.
 export async function updateIncident(req, res, next) {
   try {
     const { id } = req.params;
@@ -478,6 +591,7 @@ export async function updateIncident(req, res, next) {
   }
 }
 
+// Elimina una incidencia registrada y deja constancia en el registro de actividad.
 export async function deleteIncident(req, res, next) {
   try {
     const { id } = req.params;

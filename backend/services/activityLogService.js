@@ -1,3 +1,4 @@
+// Servicio para registrar eventos de auditoría administrativa en la base de datos.
 import pool from '../config/db.js';
 
 /**

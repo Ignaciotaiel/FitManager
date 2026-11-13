@@ -1,6 +1,8 @@
+// Banner de notificación para mostrar mensajes de error, éxito o advertencia.
 import React from 'react';
-import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { View, Text, StyleProp, ViewStyle } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { styles } from './StatusBanner.styles';
 
 export interface StatusBannerProps {
   message?: string | null;
@@ -8,6 +10,7 @@ export interface StatusBannerProps {
   style?: StyleProp<ViewStyle>;
 }
 
+// Renderiza un aviso destacado de error, éxito o advertencia.
 export function StatusBanner({ message, type = 'error', style }: StatusBannerProps) {
   const { colors } = useTheme();
 
@@ -38,21 +41,5 @@ export function StatusBanner({ message, type = 'error', style }: StatusBannerPro
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  banner: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginVertical: 8,
-    width: '100%'
-  },
-  text: {
-    fontSize: 13,
-    fontWeight: '600',
-    lineHeight: 18
-  }
-});
 
 export default StatusBanner;

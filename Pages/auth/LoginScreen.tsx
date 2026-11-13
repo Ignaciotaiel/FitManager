@@ -1,9 +1,9 @@
+// Pantalla de inicio de sesión con credenciales locales y proveedores OAuth.
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -27,12 +27,15 @@ import {
   configureGoogleSignIn,
   hasPlayServices,
   signInGoogle,
+  startGoogleWebOAuth,
   statusCodes
 } from '../../Modules/auth/googleAuth';
+import { styles } from './LoginScreen.styles';
 
+// Pantalla de inicio de sesión con formulario local y botones de acceso social.
 export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
   const { colors, isDark, toggleTheme } = useTheme();
-  const { login } = useAuth();
+  const { login, oauthFeedback, clearOauthFeedback } = useAuth();
 
   const [loading, setLoading] = useState(false);
   const [socialLoading, setSocialLoading] = useState(false);
@@ -155,11 +158,11 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
         // persistencia segura y actualizacion del contexto
         await login(response.data.token, response.data.user);
       } else {
-        setErrorMessage(response?.error?.message || 'no fue posible iniciar sesion');
+        setErrorMessage(response?.error?.message || 'no fue posible iniciar sesión');
       }
     } catch (error) {
       if (error.status === 401) {
-        setErrorMessage('correo o contrasena incorrectos');
+        setErrorMessage('correo o contraseña incorrectos');
       } else if (error.status === 403) {
         if (error.code === 'EMAIL_NOT_VERIFIED') {
           setErrorMessage('Debes verificar tu correo antes de ingresar. Redirigiendo a verificación...');
@@ -167,16 +170,16 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
             navigation.navigate('EmailVerification', { email: data.email.trim() });
           }, 1200);
         } else {
-          setErrorMessage('tu cuenta se encuentra desactivada. contacta al administrador');
+          setErrorMessage('tu cuenta se encuentra desactivada. contactá al administrador');
         }
       } else if (error.status === 400 && error.code === 'SOCIAL_ACCOUNT_ONLY') {
-        setErrorMessage('esta cuenta fue creada mediante inicio social, ingresa con tu proveedor');
+        setErrorMessage('esta cuenta fue creada mediante inicio social, ingresá con tu proveedor');
       } else if (error.code === 'TIMEOUT_ERROR') {
-        setErrorMessage('el servidor tardó demasiado en responder. por favor, intenta nuevamente.');
+        setErrorMessage('el servidor tardó demasiado en responder. por favor, intentá nuevamente.');
       } else if (error.code === 'NETWORK_ERROR') {
-        setErrorMessage('no se pudo conectar con el servidor. verifica tu conexion a internet.');
+        setErrorMessage('no se pudo conectar con el servidor. verificá tu conexión a internet.');
       } else {
-        setErrorMessage(error.message || 'error inesperado al iniciar sesion');
+        setErrorMessage(error.message || 'error inesperado al iniciar sesión');
       }
     } finally {
       setLoading(false);
@@ -191,12 +194,19 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
 
     setErrorMessage(null);
     setSocialInfo(null);
+    clearOauthFeedback?.();
 
     if (provider === 'google') {
       if (Platform.OS === 'web') {
-        setSocialInfo(
-          'El inicio de sesión con Google está disponible únicamente en la aplicación móvil.'
-        );
+        try {
+          setSocialLoading(true);
+          startGoogleWebOAuth(API_BASE_URL);
+        } catch (err: any) {
+          setSocialLoading(false);
+          setErrorMessage(
+            err?.message || 'No fue posible iniciar la autenticación con Google desde el navegador.'
+          );
+        }
         return;
       }
 
@@ -367,6 +377,12 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
           </View>
 
           {/* avisos visuales de estado */}
+          {oauthFeedback?.message && (
+            <StatusBanner
+              message={oauthFeedback.message}
+              type={oauthFeedback.type === 'error' ? 'error' : 'warning'}
+            />
+          )}
           {errorMessage && <StatusBanner message={errorMessage} type="error" />}
           {socialInfo && <StatusBanner message={socialInfo} type="warning" />}
 
@@ -376,15 +392,15 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
               control={control}
               name="email"
               rules={{
-                required: 'el correo electronico es obligatorio',
+                required: 'el correo electrónico es obligatorio',
                 pattern: {
                   value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                  message: 'formato de correo electronico invalido'
+                  message: 'formato de correo electrónico inválido'
                 }
               }}
               render={({ field: { onChange, value } }) => (
                 <Input
-                  label="correo electronico"
+                  label="correo electrónico"
                   placeholder="ejemplo@correo.com"
                   keyboardType="email-address"
                   autoCapitalize="none"
@@ -399,12 +415,12 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
               control={control}
               name="password"
               rules={{
-                required: 'la contrasena es obligatoria'
+                required: 'la contraseña es obligatoria'
               }}
               render={({ field: { onChange, value } }) => (
                 <Input
-                  label="contrasena"
-                  placeholder="ingresa tu contrasena"
+                  label="contraseña"
+                  placeholder="ingresá tu contraseña"
                   isPassword
                   value={value}
                   onChangeText={onChange}
@@ -450,15 +466,11 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
                 disabled={socialLoading || loading}
                 style={[
                   styles.socialButton,
-                  { borderColor: colors.border, backgroundColor: colors.card },
-                  (Platform.OS === 'web' || socialLoading || loading) && { opacity: 0.6 }
+                  { borderColor: colors.primary, backgroundColor: colors.card },
+                  (socialLoading || loading) && { opacity: 0.6 }
                 ]}
                 accessibilityRole="button"
-                accessibilityLabel={
-                  Platform.OS === 'web'
-                    ? 'Google (disponible únicamente en la app móvil)'
-                    : 'iniciar con google'
-                }
+                accessibilityLabel="iniciar con google"
               >
                 <Text style={[styles.socialButtonText, { color: colors.text }]}>
                   {socialLoading ? 'CONECTANDO...' : 'GOOGLE'}
@@ -467,7 +479,11 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
 
               <TouchableOpacity
                 onPress={() => handleSocialLogin('github')}
-                style={[styles.socialButton, { borderColor: colors.border, backgroundColor: colors.card }]}
+                style={[
+                  styles.socialButton,
+                  { borderColor: colors.border, backgroundColor: colors.card },
+                  Platform.OS === 'web' && { opacity: 0.65 }
+                ]}
                 accessibilityRole="button"
                 accessibilityLabel="iniciar con github"
               >
@@ -478,7 +494,11 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
 
               <TouchableOpacity
                 onPress={() => handleSocialLogin('discord')}
-                style={[styles.socialButton, { borderColor: colors.border, backgroundColor: colors.card }]}
+                style={[
+                  styles.socialButton,
+                  { borderColor: colors.border, backgroundColor: colors.card },
+                  Platform.OS === 'web' && { opacity: 0.65 }
+                ]}
                 accessibilityRole="button"
                 accessibilityLabel="iniciar con discord"
               >
@@ -492,11 +512,11 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
           {/* pie de pantalla hacia registro */}
           <View style={styles.footer}>
             <Text style={[styles.footerText, { color: colors.textSecondary }]}>
-              ¿todavia no tenes cuenta?
+              ¿todavía no tenés cuenta?
             </Text>
             <TouchableOpacity onPress={() => navigation.navigate('Register')}>
               <Text style={[styles.footerLink, { color: colors.primary }]}>
-                registrate aqui
+                registrate aquí
               </Text>
             </TouchableOpacity>
           </View>
@@ -505,122 +525,5 @@ export function LoginScreen({ navigation }: ScreenProps<'Login'>) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  keyboardContainer: {
-    flex: 1
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 24
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12
-  },
-  backButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  backText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  titleSection: {
-    marginBottom: 10
-  },
-  brandLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 2
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  subtitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 2
-  },
-  formCard: {
-    marginTop: 4,
-    padding: 14
-  },
-  forgotPasswordContainer: {
-    alignItems: 'flex-end',
-    marginTop: 4,
-    marginBottom: 8
-  },
-  forgotPasswordText: {
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  submitBtn: {
-    marginTop: 8
-  },
-  socialSection: {
-    marginTop: 14
-  },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 10
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1
-  },
-  dividerText: {
-    marginHorizontal: 10,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  socialButtonsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'space-between'
-  },
-  socialButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 46
-  },
-  socialButtonText: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 18,
-    marginBottom: 10
-  },
-  footerText: {
-    fontSize: 13
-  },
-  footerLink: {
-    fontSize: 13,
-    fontWeight: '700'
-  }
-});
 
 export default LoginScreen;

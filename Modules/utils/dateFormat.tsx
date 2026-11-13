@@ -1,4 +1,4 @@
-// utilidades de fecha para la capa de presentacion (formato argentino DD-MM-AAAA)
+// utilidades de fecha para la capa de presentacion (formato argentino DD/MM/AAAA)
 // el backend sigue recibiendo y devolviendo fechas ISO (AAAA-MM-DD / ISO 8601): la conversion ocurre solo en el frontend
 
 const ISO_DATE_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -18,9 +18,25 @@ export const MONTH_NAMES_ES = [
   'diciembre'
 ];
 
+export const MONTH_SHORT_ES = [
+  'ENE',
+  'FEB',
+  'MAR',
+  'ABR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AGO',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DIC'
+];
+
 // lunes como primer dia de la semana (convencion argentina)
 export const WEEKDAY_LABELS_ES = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
+// Rellena un número con un cero a la izquierda para mantener dos dígitos.
 function pad(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -45,23 +61,53 @@ export function isoToDate(iso: string | null | undefined): Date | null {
   return date;
 }
 
+// Devuelve la fecha local del día actual en formato ISO (AAAA-MM-DD).
 export function todayIso(): string {
   return dateToIso(new Date());
 }
 
-// 'AAAA-MM-DD' -> 'DD-MM-AAAA' (cadena vacia si no es valida)
+// 'AAAA-MM-DD' -> 'DD/MM/AAAA' (cadena vacia si no es valida)
 export function isoToDisplay(iso: string | null | undefined): string {
   const date = isoToDate(iso);
   if (!date) return '';
-  return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()}`;
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 }
 
-// marca de tiempo del backend (ISO 8601 o Date) -> 'DD-MM-AAAA HH:mm' en hora local del dispositivo
+// marca de tiempo del backend (ISO 8601, 'AAAA-MM-DD' o Date) -> 'DD/MM/AAAA' en hora local
+export function formatDateAR(value: string | number | Date | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'string') {
+    const isoOnly = value.trim().slice(0, 10);
+    const parsedIso = isoToDate(isoOnly);
+    if (parsedIso && value.trim().length === 10) {
+      return `${pad(parsedIso.getDate())}/${pad(parsedIso.getMonth() + 1)}/${parsedIso.getFullYear()}`;
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+// marca de tiempo del backend (ISO 8601 o Date) -> 'DD/MM/AAAA HH:mm' en hora local del dispositivo
 export function formatDateTimeAR(value: string | number | Date | null | undefined): string {
   if (value === null || value === undefined || value === '') return '';
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// extrae 'AAAA-MM-DD' en hora local de cualquier fecha o timestamp del backend
+export function toLocalIsoDate(value: string | number | Date | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'string') {
+    const isoPrefix = value.trim().slice(0, 10);
+    if (ISO_DATE_REGEX.test(isoPrefix) && value.trim().length === 10) {
+      return isoPrefix;
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return dateToIso(date);
 }
 
 // descripcion legible del periodo seleccionado
@@ -74,7 +120,7 @@ export function describePeriod(startIso: string, endIso: string): string {
   return 'Todas las fechas';
 }
 
-// cantidad de dias de un mes (month: 0-11)
+// cantidad de dias de un mes (month: 0-11), contempla automaticamente años bisiestos
 export function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate();
 }

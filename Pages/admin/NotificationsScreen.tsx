@@ -1,5 +1,6 @@
+// Permite al administrador crear, editar, ocultar y eliminar avisos internos del gimnasio.
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl } from 'react-native';
+import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
@@ -18,6 +19,7 @@ import {
   ScreenTopBar,
   FilterChips
 } from '../../Modules/components/index';
+import { styles } from './NotificationsScreen.styles';
 
 const TARGET_OPTIONS: { value: NotificationTarget; label: string }[] = [
   { value: 'all', label: 'TODOS' },
@@ -31,6 +33,7 @@ const TARGET_LABELS: Record<NotificationTarget, string> = {
   member: 'SOLO SOCIOS'
 };
 
+// Pantalla de gestión de notificaciones internas segmentadas por rol.
 export function NotificationsScreen({ navigation }: ScreenProps<'Notifications'>) {
   const { colors } = useTheme();
   const { token } = useAuth();
@@ -253,30 +256,6 @@ export function NotificationsScreen({ navigation }: ScreenProps<'Notifications'>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  container: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
-  listContent: { flexGrow: 1, paddingBottom: 36 },
-  formCard: { padding: 14, marginVertical: 6 },
-  formTitle: { fontSize: 13, fontWeight: '900', letterSpacing: 0.8, marginBottom: 4 },
-  buttonRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
-  flexBtn: { flex: 1, paddingHorizontal: 4 },
-  itemCard: { padding: 12, marginVertical: 5 },
-  itemTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  itemTitle: { fontSize: 14, fontWeight: '800', flex: 1 },
-  statusTag: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2
-  },
-  itemContent: { fontSize: 13, marginTop: 6, lineHeight: 18 },
-  meta: { fontSize: 11, marginTop: 6 }
-});
 
 export default NotificationsScreen;
 

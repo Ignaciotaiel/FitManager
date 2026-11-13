@@ -1,3 +1,4 @@
+// Middlewares de verificación de token JWT, vigencia de sesión y control de permisos por rol.
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 

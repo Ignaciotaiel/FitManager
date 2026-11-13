@@ -1,7 +1,9 @@
+// Cuadro de diálogo modal para confirmar acciones críticas o destructivas.
 import React from 'react';
-import { Modal, View, Text, StyleSheet, TouchableWithoutFeedback } from 'react-native';
+import { Modal, View, Text, TouchableWithoutFeedback } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
 import Button from './Button';
+import { styles } from './ConfirmModal.styles';
 
 export interface ConfirmModalProps {
   visible: boolean;
@@ -15,6 +17,7 @@ export interface ConfirmModalProps {
   loading?: boolean;
 }
 
+// Renderiza un modal de confirmación con botones de acción principal y cancelación.
 export function ConfirmModal({
   visible,
   title = 'confirmar accion',
@@ -80,40 +83,6 @@ export function ConfirmModal({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 400,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 8
-  },
-  message: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 20
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 12
-  },
-  actionBtn: {
-    flex: 1,
-    marginVertical: 0
-  }
-});
 
 export default ConfirmModal;
 

@@ -1,3 +1,4 @@
+// Pruebas automatizadas de recuperación de contraseña e invalidación de sesiones por token_version.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';

@@ -1,3 +1,4 @@
+// Define las rutas protegidas de administración (/api/admin).
 import { Router } from 'express';
 import { verifyToken, requireRole } from '../middlewares/authMiddleware.js';
 import {
@@ -7,6 +8,7 @@ import {
   updateNotification,
   deleteNotification,
   getActiveNotificationsForUser,
+  markNotificationsAsRead,
   listIncidents,
   createIncident,
   updateIncident,
@@ -16,8 +18,9 @@ import {
 
 const router = Router();
 
-// Endpoint para que cualquier usuario autenticado vea notificaciones relevantes a su rol
+// Endpoints para que cualquier usuario autenticado consulte y marque como leídos los avisos dirigidos a su rol
 router.get('/notifications/active', verifyToken, getActiveNotificationsForUser);
+router.post('/notifications/read', verifyToken, markNotificationsAsRead);
 
 // Todos los demás endpoints requieren verificación estricta de token y rol 'admin'
 router.use(verifyToken, requireRole('admin'));

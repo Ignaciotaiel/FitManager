@@ -1,6 +1,8 @@
+// Contenedor visual con bordes redondeados y colores adaptados al tema activo.
 import React, { ReactNode } from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle, ViewProps } from 'react-native';
+import { View, StyleProp, ViewStyle, ViewProps } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { styles } from './Card.styles';
 
 export interface CardProps extends ViewProps {
   children?: ReactNode;
@@ -8,6 +10,7 @@ export interface CardProps extends ViewProps {
   style?: StyleProp<ViewStyle>;
 }
 
+// Renderiza un contenedor tipo tarjeta con bordes y fondo acordes al tema visual.
 export function Card({ children, surface = false, style, ...rest }: CardProps) {
   const { colors } = useTheme();
 
@@ -27,15 +30,6 @@ export function Card({ children, surface = false, style, ...rest }: CardProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  cardBase: {
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    marginVertical: 5
-  }
-});
 
 export default Card;
 

@@ -1,3 +1,4 @@
+// Centraliza las solicitudes de inicio de sesión, registro, verificación y recuperación de cuenta.
 import apiClient from '../api/client';
 
 // servicio desacoplado para operaciones de autenticacion con el backend

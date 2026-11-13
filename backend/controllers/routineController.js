@@ -1,3 +1,4 @@
+// Controladores para gestionar rutinas de entrenamiento, ejercicios asociados y asignación de socios.
 import pool from '../config/db.js';
 import { logActivity } from '../services/activityLogService.js';
 
@@ -43,7 +44,8 @@ export async function listRoutines(req, res, next) {
         r.trainer_id, 
         r.member_id, 
         r.created_at,
-        u_trainer.name AS trainer_name
+        u_trainer.name AS trainer_name,
+        (SELECT COUNT(*) FROM routine_exercises re WHERE re.routine_id = r.id) AS exercises_count
       FROM routines r
       LEFT JOIN users u_trainer ON r.trainer_id = u_trainer.id
     `;
@@ -118,6 +120,7 @@ export async function listRoutines(req, res, next) {
       const assignedUsers = assignmentsByRoutine[r.id] || [];
       return {
         ...r,
+        exercises_count: Number(r.exercises_count || 0),
         assigned_users: assignedUsers,
         assigned_count: assignedUsers.length,
         // Mantener member_name retrocompatible (primer asignado o legacy)

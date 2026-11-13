@@ -1,3 +1,5 @@
+// Genera y exporta archivos CSV compatibles con Excel en Android y navegadores web.
+import { Platform } from 'react-native';
 import { File, Paths, EncodingType } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import type { ExportEntity } from './adminService';
@@ -104,6 +106,7 @@ export function formatCsvCell(value: unknown): string {
   return text;
 }
 
+// Convierte un arreglo de registros en contenido CSV con encabezados en español y BOM UTF-8.
 export function recordsToCsv(
   records: Record<string, any>[],
   entityOrColumns?: ExportEntity | CsvColumn[] | string[]
@@ -155,6 +158,20 @@ export async function exportRecordsToCsvFile(
   const csvContent = recordsToCsv(records, entity);
   const dateStamp = new Date().toISOString().slice(0, 10);
   const fileName = `fitmanager_${entity}_${dateStamp}.csv`;
+
+  // en navegador: descarga directa del archivo (no existe menu nativo de compartir)
+  if (Platform.OS === 'web') {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    return { fileName, fileUri: fileName, rowCount: records.length };
+  }
 
   const csvFile = new File(Paths.cache, fileName);
   csvFile.create({ overwrite: true, intermediates: true });

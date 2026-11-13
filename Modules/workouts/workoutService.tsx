@@ -1,3 +1,4 @@
+// Centraliza las solicitudes de sesiones de entrenamiento, series en vivo e historial deportivo.
 import apiClient from '../api/client';
 
 // servicio desacoplado para interactuar con los endpoints de entrenamientos y series

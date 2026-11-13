@@ -1,3 +1,4 @@
+// Define constantes de espaciado, tipografía y estilos base compartidos.
 import { StyleSheet } from 'react-native';
 import { ThemeColors } from './theme/colors';
 

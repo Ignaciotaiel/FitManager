@@ -1,3 +1,4 @@
+// Configura la pila de navegación exclusiva para el rol de socio.
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MemberDashboardScreen } from '../../Pages/member/MemberDashboardScreen';
@@ -10,6 +11,7 @@ import type { MemberStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<MemberStackParamList>();
 
+// Define las pantallas disponibles dentro del flujo de navegación del socio.
 export function MemberNavigator() {
   const { colors } = useTheme();
 

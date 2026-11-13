@@ -1,18 +1,23 @@
+// Muestra el panel principal del socio con sus rutinas asignadas, última sesión y accesos rápidos.
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   TouchableOpacity,
-  RefreshControl
+  RefreshControl,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { routineService } from '../../Modules/routines/routineService';
 import { workoutService } from '../../Modules/workouts/workoutService';
+import { adminService } from '../../Modules/admin/adminService';
+import { formatDateAR } from '../../Modules/utils/dateFormat';
 import {
   DashboardHeader,
   Card,
@@ -21,26 +26,57 @@ import {
   LoadingSpinner,
   EmptyState
 } from '../../Modules/components/index';
+import { styles } from './MemberDashboardScreen.styles';
 
+// Pantalla principal del socio con resumen de actividad y rutinas asignadas.
 export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboard'>) {
   const { colors } = useTheme();
   const { token, user } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= 960;
 
   const [routines, setRoutines] = useState<any[]>([]);
   const [activeSessionsByRoutine, setActiveSessionsByRoutine] = useState<any>({});
   const [lastSession, setLastSession] = useState<any>(null);
   const [totalSessionsCount, setTotalSessionsCount] = useState(0);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<any>(null);
 
+  // Sincroniza únicamente la cantidad de avisos nuevos sin bloquear la interfaz.
+  const refreshUnreadNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const notifRes = await adminService.getActiveNotifications(token);
+      if (notifRes?.ok && notifRes?.data) {
+        const list = Array.isArray(notifRes.data.notifications) ? notifRes.data.notifications : [];
+        const unread =
+          typeof notifRes.data.unread_count === 'number'
+            ? notifRes.data.unread_count
+            : list.filter((n: any) => !n.is_read).length;
+        setUnreadNotificationsCount(unread);
+      }
+    } catch (_) {}
+  }, [token]);
+
   const loadDashboardData = useCallback(async () => {
     try {
       setErrorMessage(null);
-      const [routineRes, historyRes]: any[] = await Promise.all([
+      const [routineRes, historyRes, notifRes]: any[] = await Promise.all([
         routineService.getRoutines(token).catch(err => ({ ok: false, error: err })),
-        workoutService.getHistory({ limit: 1 }, token).catch(() => ({ ok: false }))
+        workoutService.getHistory({ limit: 1 }, token).catch(() => ({ ok: false })),
+        adminService.getActiveNotifications(token).catch(() => ({ ok: false }))
       ]);
+
+      if (notifRes?.ok && notifRes?.data) {
+        const list = Array.isArray(notifRes.data.notifications) ? notifRes.data.notifications : [];
+        const unread =
+          typeof notifRes.data.unread_count === 'number'
+            ? notifRes.data.unread_count
+            : list.filter((n: any) => !n.is_read).length;
+        setUnreadNotificationsCount(unread);
+      }
 
       let loadedRoutines: any[] = [];
       if (routineRes?.ok && Array.isArray(routineRes?.data?.routines)) {
@@ -101,13 +137,19 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
     loadDashboardData();
   }, [loadDashboardData]);
 
-  // Actualizar el estado de sesión activa al regresar a esta pantalla
+  // Actualizar el estado de sesión activa y avisos al regresar a esta pantalla o periódicamente
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       loadDashboardData();
     });
-    return unsubscribe;
-  }, [navigation, loadDashboardData]);
+    const intervalId = setInterval(() => {
+      refreshUnreadNotifications();
+    }, 30000);
+    return () => {
+      unsubscribe();
+      clearInterval(intervalId);
+    };
+  }, [navigation, loadDashboardData, refreshUnreadNotifications]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -137,6 +179,51 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
             }
           >
+            {/* 0. INDICADOR DISCRETO DE NUEVOS AVISOS DEL GIMNASIO */}
+            {unreadNotificationsCount > 0 && (
+              <View
+                style={[
+                  styles.unreadNoticeBanner,
+                  {
+                    backgroundColor: withAlpha(colors.primary, 0.12),
+                    borderColor: colors.primary
+                  }
+                ]}
+              >
+                <View style={styles.unreadNoticeTextCol}>
+                  <View style={styles.unreadNoticeTitleRow}>
+                    <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                    <Text style={[styles.unreadNoticeTitle, { color: colors.text }]}>
+                      {unreadNotificationsCount === 1
+                        ? '¡Tenés un nuevo aviso!'
+                        : `¡Tenés ${unreadNotificationsCount} nuevos avisos!`}
+                    </Text>
+                  </View>
+                  <Text style={[styles.unreadNoticeSubtitle, { color: colors.textSecondary }]}>
+                    El administrador publicó un nuevo comunicado para el gimnasio.
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('NotificationsInbox')}
+                  activeOpacity={0.85}
+                  style={[
+                    styles.unreadNoticeActionBtn,
+                    {
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Ver avisos del gimnasio"
+                >
+                  <Text style={[styles.unreadNoticeActionText, { color: colors.primaryText }]}>
+                    Ver avisos
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* 1. SECCIÓN DE ESTADO RÁPIDO / RESUMEN REAL */}
             <View style={styles.summaryGrid}>
               <View style={[styles.summaryCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -154,7 +241,7 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
                 <View style={styles.summaryValueRow}>
                   <Text style={[styles.summaryValueSmall, { color: colors.text }]}>
                     {lastSession?.session_date
-                      ? new Date(lastSession.session_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })
+                      ? formatDateAR(lastSession.session_date)
                       : 'Sin registros'}
                   </Text>
                   {lastSession && (
@@ -175,76 +262,83 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
               </View>
 
               {routines.length > 0 ? (
-                routines.map((routine, idx) => {
-                  const hasActive = Boolean(activeSessionsByRoutine[routine.id]);
-                  return (
-                    <Card
-                      key={String(routine.id)}
-                      style={[
-                        styles.routineCardUnified,
-                        hasActive && { borderColor: colors.primary, borderWidth: 1.5 }
-                      ]}
-                    >
-                      <View style={styles.heroCardHeader}>
-                        <View
-                          style={[
-                            styles.heroBadgeBox,
-                            hasActive
-                              ? { backgroundColor: 'rgba(57, 255, 20, 0.15)' }
-                              : { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }
-                          ]}
-                        >
-                          <Text
+                <View style={isDesktop && routines.length > 1 ? styles.routinesGridDesktop : undefined}>
+                  {routines.map((routine, idx) => {
+                    const hasActive = Boolean(activeSessionsByRoutine[routine.id]);
+                    return (
+                      <Card
+                        key={String(routine.id)}
+                        style={[
+                          styles.routineCardUnified,
+                          isDesktop && routines.length > 1 && styles.routineCardDesktop,
+                          hasActive && { borderColor: colors.primary, borderWidth: 1.5 }
+                        ]}
+                      >
+                        <View style={styles.heroCardHeader}>
+                          <View
                             style={[
-                              styles.heroBadgeText,
-                              { color: hasActive ? colors.primary : colors.textMuted }
+                              styles.heroBadgeBox,
+                              hasActive
+                                ? { backgroundColor: withAlpha(colors.primary, 0.15) }
+                                : { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }
                             ]}
                           >
-                            {hasActive ? '● EN CURSO' : `RUTINA #${idx + 1}`}
-                          </Text>
+                            <Text
+                              style={[
+                                styles.heroBadgeText,
+                                { color: hasActive ? colors.primary : colors.textMuted }
+                              ]}
+                            >
+                              {hasActive ? '● EN CURSO' : `RUTINA #${idx + 1}`}
+                            </Text>
+                          </View>
+                          {routine.trainer_name ? (
+                            <Text style={[styles.heroTrainerTag, { color: colors.textSecondary }]}>
+                              Prof. {routine.trainer_name}
+                            </Text>
+                          ) : null}
                         </View>
-                        {routine.trainer_name ? (
-                          <Text style={[styles.heroTrainerTag, { color: colors.textSecondary }]}>
-                            Prof. {routine.trainer_name}
+
+                        <Text style={[styles.heroRoutineName, { color: colors.text }]}>
+                          {routine.name}
+                        </Text>
+
+                        {routine.description ? (
+                          <Text style={[styles.heroRoutineDesc, { color: colors.textSecondary }]}>
+                            {routine.description}
                           </Text>
                         ) : null}
-                      </View>
 
-                      <Text style={[styles.heroRoutineName, { color: colors.text }]}>
-                        {routine.name}
-                      </Text>
-
-                      {routine.description ? (
-                        <Text style={[styles.heroRoutineDesc, { color: colors.textSecondary }]}>
-                          {routine.description}
-                        </Text>
-                      ) : null}
-
-                      {/* Fila de metadatos del plan */}
-                      <View style={[styles.heroMetaRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                        <View style={styles.heroMetaCol}>
-                          <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>ENTRENADOR</Text>
-                          <Text style={[styles.heroMetaVal, { color: colors.text }]}>
-                            {routine.trainer_name || 'Staff FitManager'}
-                          </Text>
+                        {/* Fila de metadatos del plan */}
+                        <View style={[styles.heroMetaRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                          <View style={styles.heroMetaCol}>
+                            <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>ENTRENADOR</Text>
+                            <Text style={[styles.heroMetaVal, { color: colors.text }]}>
+                              {routine.trainer_name || 'Staff FitManager'}
+                            </Text>
+                          </View>
+                          <View style={styles.heroMetaColRight}>
+                            <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>EJERCICIOS</Text>
+                            <Text style={[styles.heroMetaVal, { color: colors.primary }]}>
+                              {typeof routine.exercises_count === 'number'
+                                ? `${routine.exercises_count} ${routine.exercises_count === 1 ? 'asignado' : 'asignados'}`
+                                : Array.isArray(routine.exercises)
+                                ? `${routine.exercises.length} asignados`
+                                : 'Ver detalle'}
+                            </Text>
+                          </View>
                         </View>
-                        <View style={styles.heroMetaColRight}>
-                          <Text style={[styles.heroMetaLabel, { color: colors.textMuted }]}>EJERCICIOS</Text>
-                          <Text style={[styles.heroMetaVal, { color: colors.primary }]}>
-                            {Array.isArray(routine.exercises) ? `${routine.exercises.length} asignados` : 'Ver detalle'}
-                          </Text>
-                        </View>
-                      </View>
 
-                      <Button
-                        title={hasActive ? 'CONTINUAR ENTRENAMIENTO' : 'INICIAR ENTRENAMIENTO AHORA'}
-                        variant={hasActive ? 'primary' : 'primary'}
-                        onPress={() => navigation.navigate('RoutineDetail', { routineId: routine.id })}
-                        style={styles.heroActionBtn}
-                      />
-                    </Card>
-                  );
-                })
+                        <Button
+                          title={hasActive ? 'CONTINUAR ENTRENAMIENTO' : 'INICIAR ENTRENAMIENTO AHORA'}
+                          variant={hasActive ? 'primary' : 'primary'}
+                          onPress={() => navigation.navigate('RoutineDetail', { routineId: routine.id })}
+                          style={styles.heroActionBtn}
+                        />
+                      </Card>
+                    );
+                  })}
+                </View>
               ) : (
                 <EmptyState
                   title="sin rutinas asignadas"
@@ -266,7 +360,7 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
                   activeOpacity={0.85}
                   style={[styles.gridActionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 >
-                  <View style={[styles.gridIconCircle, { backgroundColor: 'rgba(57, 255, 20, 0.12)' }]}>
+                  <View style={[styles.gridIconCircle, { backgroundColor: withAlpha(colors.primary, 0.12) }]}>
                     <Text style={[styles.gridIcon, { color: colors.primary }]}>📖</Text>
                   </View>
                   <Text style={[styles.gridCardTitle, { color: colors.text }]}>
@@ -286,33 +380,122 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
                   activeOpacity={0.85}
                   style={[styles.gridActionCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 >
-                  <View style={[styles.gridIconCircle, { backgroundColor: 'rgba(57, 255, 20, 0.12)' }]}>
-                    <Text style={[styles.gridIcon, { color: colors.primary }]}>⏱</Text>
+                  <View style={[styles.gridIconCircle, { backgroundColor: withAlpha(colors.primary, 0.12) }]}>
+                    <Text style={[styles.gridIcon, { color: colors.primary }]}>📈</Text>
                   </View>
                   <Text style={[styles.gridCardTitle, { color: colors.text }]}>
-                    REGISTRO DE SESIONES
+                    PROGRESO E HISTORIAL
                   </Text>
                   <Text style={[styles.gridCardSub, { color: colors.textSecondary }]}>
                     {lastSession
-                      ? `Último entreno: ${new Date(lastSession.session_date).toLocaleDateString()}`
-                      : 'Consultá tu historial de series y marcas'}
+                      ? `Último entreno: ${formatDateAR(lastSession.session_date)}`
+                      : 'Gráficos de evolución, series y marcas'}
                   </Text>
                   <View style={styles.gridCardFooter}>
                     <Text style={[styles.gridActionLink, { color: colors.primary }]}>
-                      VER HISTORIAL ➔
+                      VER PROGRESO ➔
                     </Text>
                   </View>
                 </TouchableOpacity>
+
+                {isDesktop && (
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('NotificationsInbox')}
+                    activeOpacity={0.85}
+                    style={[
+                      styles.gridActionCard,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: unreadNotificationsCount > 0 ? colors.primary : colors.border,
+                        borderWidth: unreadNotificationsCount > 0 ? 1.5 : 1
+                      }
+                    ]}
+                  >
+                    <View style={styles.gridCardTopRow}>
+                      <View
+                        style={[
+                          styles.gridIconCircle,
+                          { backgroundColor: withAlpha(colors.primary, 0.12), marginBottom: 0 }
+                        ]}
+                      >
+                        <Text style={[styles.gridIcon, { color: colors.primary }]}>🔔</Text>
+                      </View>
+                      {unreadNotificationsCount > 0 && (
+                        <View
+                          style={[
+                            styles.unreadBadgePill,
+                            {
+                              backgroundColor: withAlpha(colors.primary, 0.16),
+                              borderColor: colors.primary
+                            }
+                          ]}
+                        >
+                          <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                          <Text style={[styles.unreadBadgePillText, { color: colors.primary }]}>
+                            NUEVO ({unreadNotificationsCount})
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[styles.gridCardTitle, { color: colors.text }]}>
+                      AVISOS DEL GIMNASIO
+                    </Text>
+                    <Text style={[styles.gridCardSub, { color: colors.textSecondary }]}>
+                      {unreadNotificationsCount > 0
+                        ? `Tenés ${unreadNotificationsCount} ${
+                            unreadNotificationsCount === 1 ? 'comunicado nuevo' : 'comunicados nuevos'
+                          } sin leer`
+                        : 'Novedades, comunicados y horarios especiales del gimnasio'}
+                    </Text>
+                    <View style={styles.gridCardFooter}>
+                      <Text style={[styles.gridActionLink, { color: colors.primary }]}>
+                        VER AVISOS ➔
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
 
-            <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
-              <Button
-                title="AVISOS DEL GIMNASIO"
-                variant="secondary"
-                onPress={() => navigation.navigate('NotificationsInbox')}
-              />
-            </View>
+            {!isDesktop && (
+              <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('NotificationsInbox')}
+                  activeOpacity={0.85}
+                  style={[
+                    styles.mobileNoticeBtn,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: unreadNotificationsCount > 0 ? colors.primary : colors.border
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Avisos del gimnasio"
+                >
+                  <Text style={[styles.mobileNoticeBtnText, { color: colors.text }]}>
+                    🔔 AVISOS DEL GIMNASIO
+                  </Text>
+                  {unreadNotificationsCount > 0 ? (
+                    <View
+                      style={[
+                        styles.unreadBadgePill,
+                        {
+                          backgroundColor: withAlpha(colors.primary, 0.16),
+                          borderColor: colors.primary
+                        }
+                      ]}
+                    >
+                      <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                      <Text style={[styles.unreadBadgePillText, { color: colors.primary }]}>
+                        NUEVO ({unreadNotificationsCount})
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={[styles.gridActionLink, { color: colors.primary }]}>VER ➔</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Espaciador final defensivo para evitar que ningún botón quede tapado */}
             <View style={styles.bottomSpacer} />
@@ -322,237 +505,5 @@ export function MemberDashboardScreen({ navigation }: ScreenProps<'MemberDashboa
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  container: {
-    flex: 1
-  },
-  headerContainer: {
-    paddingHorizontal: 16
-  },
-  scrollArea: {
-    flex: 1
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 40
-  },
-  summaryGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16
-  },
-  summaryCard: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1
-  },
-  summaryLabel: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.6,
-    marginBottom: 4
-  },
-  summaryValueRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6
-  },
-  summaryValue: {
-    fontSize: 22,
-    fontWeight: '900'
-  },
-  summaryValueSmall: {
-    fontSize: 15,
-    fontWeight: '800'
-  },
-  summarySubtext: {
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  heroSection: {
-    marginBottom: 20
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8
-  },
-  sectionHeading: {
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  activePill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    borderWidth: 1
-  },
-  activePillText: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.5
-  },
-  heroCard: {
-    padding: 16,
-    borderWidth: 1.5,
-    borderRadius: 14
-  },
-  heroCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6
-  },
-  heroBadgeBox: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    backgroundColor: 'rgba(57, 255, 20, 0.1)'
-  },
-  heroBadgeText: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  heroTrainerTag: {
-    fontSize: 11,
-    fontWeight: '700'
-  },
-  heroRoutineName: {
-    fontSize: 22,
-    fontWeight: '900',
-    letterSpacing: 0.3,
-    marginBottom: 6
-  },
-  heroRoutineDesc: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 12
-  },
-  heroMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginBottom: 14
-  },
-  heroMetaCol: {
-    flex: 1
-  },
-  heroMetaColRight: {
-    alignItems: 'flex-end'
-  },
-  heroMetaLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  heroMetaVal: {
-    fontSize: 13,
-    fontWeight: '800',
-    marginTop: 2
-  },
-  heroActionBtn: {
-    marginTop: 2
-  },
-  routineCardUnified: {
-    padding: 16,
-    borderRadius: 14,
-    marginBottom: 14
-  },
-  secondarySection: {
-    marginBottom: 20
-  },
-  secondaryCard: {
-    padding: 14,
-    marginBottom: 10,
-    borderRadius: 12
-  },
-  secondaryHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4
-  },
-  secondaryRoutineTag: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.6,
-    marginBottom: 2
-  },
-  secondaryRoutineName: {
-    fontSize: 17,
-    fontWeight: '800'
-  },
-  secondaryRoutineDesc: {
-    fontSize: 12,
-    lineHeight: 16,
-    marginBottom: 10
-  },
-  secondaryBtn: {
-    marginTop: 4
-  },
-  quickAccessSection: {
-    marginBottom: 16
-  },
-  actionGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 8
-  },
-  gridActionCard: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    justifyContent: 'space-between',
-    minHeight: 140
-  },
-  gridIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8
-  },
-  gridIcon: {
-    fontSize: 18
-  },
-  gridCardTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-    marginBottom: 4
-  },
-  gridCardSub: {
-    fontSize: 11,
-    lineHeight: 15,
-    marginBottom: 8
-  },
-  gridCardFooter: {
-    marginTop: 'auto',
-    paddingTop: 6
-  },
-  gridActionLink: {
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.5
-  },
-  bottomSpacer: {
-    height: 24
-  }
-});
 
 export default MemberDashboardScreen;

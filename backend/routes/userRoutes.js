@@ -1,3 +1,4 @@
+// Define las rutas de administración de usuarios (/api/users).
 import { Router } from 'express';
 import {
   listUsers,

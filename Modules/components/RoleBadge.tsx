@@ -1,20 +1,24 @@
+// Insignia visual que identifica el rol del usuario (Administrador, Entrenador o Socio).
 import React from 'react';
-import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { View, Text, StyleProp, ViewStyle } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { UserRole } from '../types';
+import { styles } from './RoleBadge.styles';
 
 export interface RoleBadgeProps {
   role?: UserRole | string | null;
   style?: StyleProp<ViewStyle>;
 }
 
+// Renderiza una etiqueta coloreada según el rol del usuario.
 export function RoleBadge({ role, style }: RoleBadgeProps) {
   const { colors } = useTheme();
 
   const roleConfigs: Record<string, { label: string; bg: string; text: string; border: string }> = {
-    admin: { label: 'ADMINISTRADOR', bg: 'rgba(239, 68, 68, 0.15)', text: colors.danger, border: colors.danger },
-    trainer: { label: 'ENTRENADOR', bg: 'rgba(59, 130, 246, 0.15)', text: colors.info, border: colors.info },
-    member: { label: 'SOCIO', bg: 'rgba(57, 255, 20, 0.15)', text: colors.primary, border: colors.primary }
+    admin: { label: 'ADMINISTRADOR', bg: withAlpha(colors.danger, 0.15), text: colors.danger, border: colors.danger },
+    trainer: { label: 'ENTRENADOR', bg: withAlpha(colors.info, 0.15), text: colors.info, border: colors.info },
+    member: { label: 'SOCIO', bg: withAlpha(colors.primary, 0.15), text: colors.primary, border: colors.primary }
   };
 
   const config = (role ? roleConfigs[role] : null) || {
@@ -41,21 +45,6 @@ export function RoleBadge({ role, style }: RoleBadgeProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 20,
-    borderWidth: 1,
-    alignSelf: 'flex-start'
-  },
-  text: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8
-  }
-});
 
 export default RoleBadge;
 

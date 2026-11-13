@@ -1,7 +1,9 @@
+// Configura la pila de navegación exclusiva para el rol de administrador.
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AdminDashboardScreen } from '../../Pages/admin/AdminDashboardScreen';
 import { UsersScreen } from '../../Pages/admin/UsersScreen';
+import { AdminRoutinesScreen } from '../../Pages/admin/AdminRoutinesScreen';
 import { ExercisesScreen } from '../../Pages/common/ExercisesScreen';
 import { RoutineDetailScreen } from '../../Pages/common/RoutineDetailScreen';
 import { WorkoutHistoryScreen } from '../../Pages/common/WorkoutHistoryScreen';
@@ -14,6 +16,7 @@ import type { AdminStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<AdminStackParamList>();
 
+// Define las pantallas disponibles dentro del flujo de navegación del administrador.
 export function AdminNavigator() {
   const { colors } = useTheme();
 
@@ -28,6 +31,7 @@ export function AdminNavigator() {
     >
       <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       <Stack.Screen name="Users" component={UsersScreen} />
+      <Stack.Screen name="AdminRoutines" component={AdminRoutinesScreen} />
       <Stack.Screen name="Exercises" component={ExercisesScreen} />
       <Stack.Screen name="RoutineDetail" component={RoutineDetailScreen} />
       <Stack.Screen name="WorkoutHistory" component={WorkoutHistoryScreen} />

@@ -1,3 +1,4 @@
+// Define las rutas del catálogo de ejercicios (/api/exercises).
 import { Router } from 'express';
 import {
   listExercises,

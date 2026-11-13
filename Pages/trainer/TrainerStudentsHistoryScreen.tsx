@@ -1,12 +1,14 @@
+// Lista los alumnos asignados al entrenador para consultar su historial y evolución de cargas.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   FlatList,
   TouchableOpacity,
-  RefreshControl
+  RefreshControl,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext';
@@ -21,10 +23,15 @@ import {
   LoadingSpinner,
   EmptyState
 } from '../../Modules/components/index';
+import { styles } from './TrainerStudentsHistoryScreen.styles';
 
+// Pantalla de listado y búsqueda de alumnos asignados al entrenador.
 export function TrainerStudentsHistoryScreen({ navigation }: ScreenProps<'TrainerStudentsHistory'>) {
   const { colors } = useTheme();
   const { token } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 768;
+  const numColumns = Platform.OS === 'web' && width >= 960 ? 2 : 1;
 
   const [members, setMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +79,7 @@ export function TrainerStudentsHistoryScreen({ navigation }: ScreenProps<'Traine
   }, [members, searchQuery]);
 
   const renderMemberItem = ({ item }) => (
-    <Card style={[styles.memberCard, { borderColor: colors.border }]}>
+    <Card style={[styles.memberCard, { borderColor: colors.border }, numColumns > 1 && { flex: 1, justifyContent: 'space-between' }]}>
       <View style={styles.memberInfoRow}>
         <View style={[styles.avatarCircle, { backgroundColor: colors.surface, borderColor: colors.primary }]}>
           <Text style={[styles.avatarText, { color: colors.primary }]}>
@@ -104,15 +111,17 @@ export function TrainerStudentsHistoryScreen({ navigation }: ScreenProps<'Traine
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.container}>
-        <View style={styles.topNavBar}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.backBtnText, { color: colors.text }]}>← VOLVER</Text>
-          </TouchableOpacity>
-        </View>
+        {!isDesktopWeb && (
+          <View style={styles.topNavBar}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.backBtnText, { color: colors.text }]}>← VOLVER</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <DashboardHeader
           title="HISTORIAL DE ALUMNOS"
@@ -134,6 +143,9 @@ export function TrainerStudentsHistoryScreen({ navigation }: ScreenProps<'Traine
           <LoadingSpinner message="cargando alumnos asignados..." fullScreen />
         ) : (
           <FlatList
+            key={String(numColumns)}
+            numColumns={numColumns}
+            columnWrapperStyle={numColumns > 1 ? { gap: 14 } : undefined}
             data={filteredMembers}
             keyExtractor={item => String(item.id)}
             renderItem={renderMemberItem}
@@ -157,76 +169,5 @@ export function TrainerStudentsHistoryScreen({ navigation }: ScreenProps<'Traine
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 16
-  },
-  topNavBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    marginTop: 4
-  },
-  backBtn: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 14
-  },
-  backBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  searchBox: {
-    marginBottom: 12
-  },
-  listContent: {
-    paddingBottom: 32
-  },
-  memberCard: {
-    marginBottom: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderRadius: 12
-  },
-  memberInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 12
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: '900'
-  },
-  nameContainer: {
-    flex: 1
-  },
-  memberName: {
-    fontSize: 16,
-    fontWeight: '800'
-  },
-  memberEmail: {
-    fontSize: 12,
-    marginTop: 2
-  },
-  historyBtn: {
-    marginTop: 4
-  }
-});
 
 export default TrainerStudentsHistoryScreen;

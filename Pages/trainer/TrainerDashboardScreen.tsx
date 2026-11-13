@@ -1,16 +1,17 @@
+// Muestra el panel principal del entrenador para crear, editar y asignar planes de entrenamiento.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   FlatList,
   TouchableOpacity,
   RefreshControl,
   Modal,
   KeyboardAvoidingView,
   Platform,
-  ScrollView
+  ScrollView,
+  useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +21,7 @@ import { useAuth } from '../../contexto/authContext';
 import { routineService } from '../../Modules/routines/routineService';
 import { exerciseService } from '../../Modules/exercises/exerciseService';
 import { userService } from '../../Modules/users/userService';
+import { adminService } from '../../Modules/admin/adminService';
 import {
   DashboardHeader,
   Card,
@@ -31,14 +33,20 @@ import {
   ConfirmModal,
   MemberPickerModal
 } from '../../Modules/components/index';
+import { styles } from './TrainerDashboardScreen.styles';
 
+// Pantalla principal del entrenador con métricas, creador de rutinas y selector de socios.
 export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashboard'>) {
   const { colors } = useTheme();
   const { token } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= 960;
+  const numColumns = isDesktop ? 2 : 1;
 
   const [routines, setRoutines] = useState<any[]>([]);
   const [exercisesLibrary, setExercisesLibrary] = useState<any[]>([]);
   const [availableMembers, setAvailableMembers] = useState<any[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<any>(null);
@@ -70,15 +78,41 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     loading: false
   });
 
+  // Sincroniza la cantidad de avisos no leídos para el entrenador sin recargar todo el panel.
+  const refreshUnreadNotifications = useCallback(async () => {
+    if (!token) return;
+    try {
+      const notifRes = await adminService.getActiveNotifications(token);
+      if (notifRes?.ok && notifRes?.data) {
+        const list = Array.isArray(notifRes.data.notifications) ? notifRes.data.notifications : [];
+        const unread =
+          typeof notifRes.data.unread_count === 'number'
+            ? notifRes.data.unread_count
+            : list.filter((n: any) => !n.is_read).length;
+        setUnreadNotificationsCount(unread);
+      }
+    } catch (_) {}
+  }, [token]);
+
   const loadData = useCallback(async () => {
     try {
       setErrorMessage(null);
-      // cargar rutinas del trainer, biblioteca de ejercicios y socios activos
-      const [routinesRes, exercisesRes, usersRes] = await Promise.all([
+      // cargar rutinas del trainer, biblioteca de ejercicios, socios activos y avisos vigentes
+      const [routinesRes, exercisesRes, usersRes, notifRes] = await Promise.all([
         routineService.getRoutines(token),
         exerciseService.getExercises({}, token),
-        userService.getUsers(token)
+        userService.getUsers(token),
+        adminService.getActiveNotifications(token).catch(() => ({ ok: false, data: undefined }))
       ]);
+
+      if (notifRes?.ok && notifRes?.data) {
+        const list = Array.isArray(notifRes.data.notifications) ? notifRes.data.notifications : [];
+        const unread =
+          typeof notifRes.data.unread_count === 'number'
+            ? notifRes.data.unread_count
+            : list.filter((n: any) => !n.is_read).length;
+        setUnreadNotificationsCount(unread);
+      }
 
       if (routinesRes?.ok && Array.isArray(routinesRes?.data?.routines)) {
         setRoutines(routinesRes.data.routines);
@@ -129,6 +163,20 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Actualizar avisos al regresar de la bandeja o periódicamente cada 30 segundos
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      refreshUnreadNotifications();
+    });
+    const intervalId = setInterval(() => {
+      refreshUnreadNotifications();
+    }, 30000);
+    return () => {
+      unsubscribe();
+      clearInterval(intervalId);
+    };
+  }, [navigation, refreshUnreadNotifications]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -373,7 +421,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
       : (item.member_id ? 1 : 0);
 
     return (
-      <Card style={styles.routineCard}>
+      <Card style={[styles.routineCard, isDesktop && styles.routineCardDesktop]}>
         <View style={styles.routineHeader}>
           <View style={{ flex: 1, paddingRight: 8 }}>
             <View style={styles.routineBadgeRow}>
@@ -383,7 +431,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
               <View style={[
                 styles.assignedBadge,
                 {
-                  backgroundColor: assignedCount > 0 ? 'rgba(57, 255, 20, 0.1)' : 'rgba(255, 170, 0, 0.1)',
+                  backgroundColor: assignedCount > 0 ? withAlpha(colors.primary, 0.12) : withAlpha(colors.warning, 0.12),
                   borderColor: assignedCount > 0 ? colors.primary : colors.warning
                 }
               ]}>
@@ -394,6 +442,21 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
                   {assignedCount > 0 ? `${assignedCount} socio(s)` : 'Plantilla'}
                 </Text>
               </View>
+              {typeof item.exercises_count === 'number' && (
+                <View
+                  style={[
+                    styles.assignedBadge,
+                    {
+                      backgroundColor: colors.surface,
+                      borderColor: colors.border
+                    }
+                  ]}
+                >
+                  <Text style={[styles.assignedBadgeText, { color: colors.textSecondary }]}>
+                    {item.exercises_count} {item.exercises_count === 1 ? 'ejercicio' : 'ejercicios'}
+                  </Text>
+                </View>
+              )}
             </View>
             <Text style={[styles.routineTitle, { color: colors.text }]}>
               {item.name}
@@ -457,6 +520,51 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
         {successMessage && <StatusBanner message={successMessage} type="success" />}
 
+        {/* 0. Indicador discreto de nuevos avisos del gimnasio */}
+        {unreadNotificationsCount > 0 && (
+          <View
+            style={[
+              styles.unreadNoticeBanner,
+              {
+                backgroundColor: withAlpha(colors.primary, 0.12),
+                borderColor: colors.primary
+              }
+            ]}
+          >
+            <View style={styles.unreadNoticeTextCol}>
+              <View style={styles.unreadNoticeTitleRow}>
+                <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                <Text style={[styles.unreadNoticeTitle, { color: colors.text }]}>
+                  {unreadNotificationsCount === 1
+                    ? '¡Tenés un nuevo aviso!'
+                    : `¡Tenés ${unreadNotificationsCount} nuevos avisos!`}
+                </Text>
+              </View>
+              <Text style={[styles.unreadNoticeSubtitle, { color: colors.textSecondary }]}>
+                El administrador publicó un nuevo comunicado para el gimnasio.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => navigation.navigate('NotificationsInbox')}
+              activeOpacity={0.85}
+              style={[
+                styles.unreadNoticeActionBtn,
+                {
+                  backgroundColor: colors.primary,
+                  borderColor: colors.primary
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Ver avisos del gimnasio"
+            >
+              <Text style={[styles.unreadNoticeActionText, { color: colors.primaryText }]}>
+                Ver avisos
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* 1. Métricas de gestión reales del entrenador */}
         <View style={styles.metricGrid}>
           <View style={[styles.metricBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -474,36 +582,123 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
         </View>
 
         {/* 2. Barra de acciones principales */}
-        <View style={styles.actionRow}>
-          <Button
-            title="📖 BIBLIOTECA DE TÉCNICAS"
-            variant="secondary"
-            onPress={() => navigation.navigate('Exercises')}
-            style={styles.halfBtn}
-          />
-          <Button
-            title="+ CREAR NUEVA RUTINA"
-            variant="primary"
-            onPress={handleOpenCreate}
-            style={styles.halfBtn}
-          />
-        </View>
+        {isDesktop ? (
+          <View style={styles.desktopToolbar}>
+            <Button
+              title="+ CREAR NUEVA RUTINA"
+              variant="primary"
+              onPress={handleOpenCreate}
+              style={styles.desktopToolbarBtn}
+            />
+            <Button
+              title="📖 BIBLIOTECA DE TÉCNICAS"
+              variant="secondary"
+              onPress={() => navigation.navigate('Exercises')}
+              style={styles.desktopToolbarBtn}
+            />
+            <Button
+              title="👥 HISTORIAL DE ALUMNOS Y PROGRESO"
+              variant="secondary"
+              onPress={() => navigation.navigate('TrainerStudentsHistory')}
+              style={styles.desktopToolbarBtn}
+            />
+            <TouchableOpacity
+              onPress={() => navigation.navigate('NotificationsInbox')}
+              activeOpacity={0.85}
+              style={[
+                styles.desktopToolbarBtn,
+                styles.noticeAccessBtn,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: unreadNotificationsCount > 0 ? colors.primary : colors.border
+                }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Avisos del gimnasio"
+            >
+              <Text style={[styles.noticeAccessBtnText, { color: colors.text }]}>
+                🔔 AVISOS DEL GIMNASIO
+              </Text>
+              {unreadNotificationsCount > 0 && (
+                <View
+                  style={[
+                    styles.unreadBadgePill,
+                    {
+                      backgroundColor: withAlpha(colors.primary, 0.16),
+                      borderColor: colors.primary
+                    }
+                  ]}
+                >
+                  <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                  <Text style={[styles.unreadBadgePillText, { color: colors.primary }]}>
+                    NUEVO ({unreadNotificationsCount})
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <View style={styles.actionRow}>
+              <Button
+                title="📖 BIBLIOTECA DE TÉCNICAS"
+                variant="secondary"
+                onPress={() => navigation.navigate('Exercises')}
+                style={styles.halfBtn}
+              />
+              <Button
+                title="+ CREAR NUEVA RUTINA"
+                variant="primary"
+                onPress={handleOpenCreate}
+                style={styles.halfBtn}
+              />
+            </View>
 
-        <View style={{ marginBottom: 12 }}>
-          <Button
-            title="👥 HISTORIAL DE ALUMNOS Y PROGRESO"
-            variant="secondary"
-            onPress={() => navigation.navigate('TrainerStudentsHistory')}
-          />
-        </View>
+            <View style={{ marginBottom: 12 }}>
+              <Button
+                title="👥 HISTORIAL DE ALUMNOS Y PROGRESO"
+                variant="secondary"
+                onPress={() => navigation.navigate('TrainerStudentsHistory')}
+              />
+            </View>
 
-        <View style={{ marginBottom: 12 }}>
-          <Button
-            title="AVISOS DEL GIMNASIO"
-            variant="secondary"
-            onPress={() => navigation.navigate('NotificationsInbox')}
-          />
-        </View>
+            <View style={{ marginBottom: 12 }}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('NotificationsInbox')}
+                activeOpacity={0.85}
+                style={[
+                  styles.noticeAccessBtn,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: unreadNotificationsCount > 0 ? colors.primary : colors.border
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Avisos del gimnasio"
+              >
+                <Text style={[styles.noticeAccessBtnText, { color: colors.text }]}>
+                  🔔 AVISOS DEL GIMNASIO
+                </Text>
+                {unreadNotificationsCount > 0 && (
+                  <View
+                    style={[
+                      styles.unreadBadgePill,
+                      {
+                        backgroundColor: withAlpha(colors.primary, 0.16),
+                        borderColor: colors.primary
+                      }
+                    ]}
+                  >
+                    <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+                    <Text style={[styles.unreadBadgePillText, { color: colors.primary }]}>
+                      NUEVO ({unreadNotificationsCount})
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
 
         <View style={styles.sectionTitleRow}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
@@ -520,6 +715,9 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
           <LoadingSpinner message="cargando tus rutinas..." />
         ) : (
           <FlatList
+            key={String(numColumns)}
+            numColumns={numColumns}
+            columnWrapperStyle={numColumns > 1 ? styles.routineColumnsWrapper : undefined}
             data={routines}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderRoutineItem}
@@ -802,7 +1000,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
                                   styles.pickItemBtn,
                                   {
                                     borderColor: isAlreadyAdded ? colors.primary : colors.border,
-                                    backgroundColor: isAlreadyAdded ? 'rgba(57, 255, 20, 0.1)' : colors.surface
+                                    backgroundColor: isAlreadyAdded ? withAlpha(colors.primary, 0.12) : colors.surface
                                   }
                                 ]}
                               >
@@ -865,350 +1063,5 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 8
-  },
-  metricGrid: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8
-  },
-  metricBox: {
-    flex: 1,
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center'
-  },
-  metricLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-    textAlign: 'center'
-  },
-  metricNumber: {
-    fontSize: 18,
-    fontWeight: '900'
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginVertical: 4
-  },
-  halfBtn: {
-    flex: 1
-  },
-  sectionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 10,
-    marginBottom: 6
-  },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  countBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    borderWidth: 1
-  },
-  countText: {
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  listContent: {
-    flexGrow: 1,
-    paddingBottom: 36
-  },
-  routineCard: {
-    padding: 14,
-    marginVertical: 5,
-    borderRadius: 12
-  },
-  routineHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4
-  },
-  routineBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 4
-  },
-  routineTag: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.6
-  },
-  assignedBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1
-  },
-  assignedBadgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  routineTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    letterSpacing: 0.2
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingTop: 2
-  },
-  smallBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1
-  },
-  smallBtnText: {
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  routineDesc: {
-    fontSize: 12,
-    lineHeight: 17,
-    marginBottom: 6
-  },
-  assignedBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-    gap: 6
-  },
-  assignedBarLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5
-  },
-  assignedBarNames: {
-    fontSize: 11,
-    fontWeight: '700',
-    flex: 1
-  },
-  detailBtn: {
-    marginTop: 2
-  },
-  trainerQuickTipsCard: {
-    marginTop: 14,
-    marginBottom: 10
-  },
-  quickTipBox: {
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1
-  },
-  quickTipTitle: {
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.6,
-    marginBottom: 4
-  },
-  quickTipDesc: {
-    fontSize: 12,
-    lineHeight: 17
-  },
-  modalBackdrop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16
-  },
-  modalContainer: {
-    width: '100%',
-    maxHeight: '88%',
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16
-  },
-  modalScroll: {
-    paddingBottom: 8
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    marginBottom: 2
-  },
-  modalSubtitle: {
-    fontSize: 13,
-    marginBottom: 12
-  },
-  subSectionTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginBottom: 6
-  },
-  placeholderText: {
-    fontSize: 12,
-    padding: 10
-  },
-  assignmentSection: {
-    marginVertical: 10
-  },
-  assignmentHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4
-  },
-  clearText: {
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  memberPickerTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginTop: 4,
-    gap: 10
-  },
-  memberPickerTriggerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    gap: 10
-  },
-  memberPickerIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  memberPickerTriggerTitle: {
-    fontSize: 13,
-    fontWeight: '800'
-  },
-  memberPickerTriggerSub: {
-    fontSize: 11,
-    marginTop: 2
-  },
-  selectedMembersChipsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 8,
-    padding: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    overflow: 'hidden'
-  },
-  memberChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
-    borderWidth: 1,
-    maxWidth: '100%'
-  },
-  memberChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    flexShrink: 1
-  },
-  exerciseSelectorSection: {
-    marginVertical: 10
-  },
-  selectedItemBox: {
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 10,
-    marginVertical: 6
-  },
-  selectedItemTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6
-  },
-  itemActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  reorderBtn: {
-    paddingHorizontal: 6,
-    paddingVertical: 2
-  },
-  reorderText: {
-    fontSize: 14,
-    fontWeight: '800'
-  },
-  selectedItemName: {
-    fontSize: 14,
-    fontWeight: '800'
-  },
-  removeText: {
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  paramInputsRow: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  paramInputWrapper: {
-    flex: 1
-  },
-  paramInputLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 2
-  },
-  libraryPicker: {
-    gap: 6,
-    marginTop: 6
-  },
-  pickItemBtn: {
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  pickItemText: {
-    fontSize: 13,
-    fontWeight: '700'
-  },
-  pickItemSub: {
-    fontSize: 11,
-    marginTop: 2
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14
-  },
-  modalBtn: {
-    flex: 1
-  }
-});
 
 export default TrainerDashboardScreen;

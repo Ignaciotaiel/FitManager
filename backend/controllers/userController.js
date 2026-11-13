@@ -1,3 +1,4 @@
+// Controladores para listar usuarios, consultar perfiles y actualizar roles o estados de cuenta.
 import pool from '../config/db.js';
 import { logActivity } from '../services/activityLogService.js';
 import { isValidEmail, isValidRole } from '../middlewares/validate.js';

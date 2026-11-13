@@ -1,3 +1,4 @@
+// Contexto global de autenticación, persistencia de sesión JWT y control de acceso por rol.
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from 'react';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
@@ -51,6 +52,8 @@ export interface AuthContextValue {
   activeSession: boolean;
   isAuthenticated: boolean;
   hasPersistedSession: boolean;
+  oauthFeedback: { type: 'error' | 'warning' | 'info'; message: string } | null;
+  clearOauthFeedback: () => void;
   login: (newToken: string, userData?: Partial<User>) => Promise<void>;
   exitApp: () => void;
   resumeSession: () => void;
@@ -67,6 +70,8 @@ const AuthContext = createContext<AuthContextValue>({
   activeSession: true,
   isAuthenticated: false,
   hasPersistedSession: false,
+  oauthFeedback: null,
+  clearOauthFeedback: () => {},
   login: async () => {},
   exitApp: () => {},
   resumeSession: () => {},
@@ -75,11 +80,17 @@ const AuthContext = createContext<AuthContextValue>({
   restoreSession: async () => {}
 });
 
+// Proveedor que administra el estado de sesión, usuario autenticado y restauraciones de token.
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [activeSession, setActiveSession] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
+  const [oauthFeedback, setOauthFeedback] = useState<{ type: 'error' | 'warning' | 'info'; message: string } | null>(null);
+
+  const clearOauthFeedback = useCallback(() => {
+    setOauthFeedback(null);
+  }, []);
 
   // funcion para validar decodificacion basica de payload jwt
   const decodeJwtPayload = (jwtToken: string): any => {
@@ -103,6 +114,85 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // restaurar sesion persistida al iniciar la aplicacion consultando al backend
   const restoreSession = useCallback(async () => {
     try {
+      // En navegador: si venimos de un callback OAuth (ej. Google Web) con ?oauth_provider=google&ticket=...
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const searchParams = new URLSearchParams(window.location.search);
+        const oauthProvider = searchParams.get('oauth_provider');
+        const ticketParam = searchParams.get('ticket');
+        const errorParam = searchParams.get('error');
+
+        if (oauthProvider || ticketParam || errorParam) {
+          // Limpiar inmediatamente los parametros de la barra de direcciones por seguridad
+          try {
+            const cleanUrl = window.location.pathname + (window.location.hash || '');
+            window.history.replaceState({}, document.title, cleanUrl);
+          } catch {}
+
+          if (errorParam) {
+            if (errorParam === 'access_denied') {
+              setOauthFeedback({
+                type: 'warning',
+                message: 'Inicio de sesión con Google cancelado por el usuario.'
+              });
+            } else if (errorParam === 'ACCOUNT_INACTIVE') {
+              setOauthFeedback({
+                type: 'error',
+                message: 'Tu cuenta vinculada a Google se encuentra desactivada. Contactá al administrador.'
+              });
+            } else if (errorParam === 'INVALID_OR_EXPIRED_STATE') {
+              setOauthFeedback({
+                type: 'error',
+                message: 'La sesión de autorización con Google expiró o no es válida. Intentá nuevamente.'
+              });
+            } else {
+              setOauthFeedback({
+                type: 'error',
+                message: `No se pudo completar la autenticación con Google (${errorParam}).`
+              });
+            }
+          } else if (ticketParam) {
+            try {
+              const exRes = await fetch(`${API_BASE_URL}/auth/oauth/exchange-ticket`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticket: ticketParam })
+              });
+              const exData = await exRes.json();
+
+              if (exRes.ok && exData?.ok && exData?.data?.token) {
+                const newToken = exData.data.token;
+                const userData = exData.data.user;
+                await storage.setItem(TOKEN_KEY, newToken);
+                const payload = decodeJwtPayload(newToken);
+                const serverRole = (payload?.role || userData?.role || 'member') as UserRole;
+                setToken(newToken);
+                setUser({
+                  id: payload?.id || userData?.id || 0,
+                  name: userData?.name || payload?.name || userData?.email?.split('@')[0] || 'Usuario',
+                  email: payload?.email || userData?.email || '',
+                  role: serverRole,
+                  is_active: userData?.is_active !== undefined ? userData.is_active : 1,
+                  ...(userData || {})
+                });
+                setActiveSession(true);
+                setOauthFeedback(null);
+                return;
+              } else {
+                setOauthFeedback({
+                  type: 'error',
+                  message: exData?.error?.message || 'El ticket de Google expiró o ya fue utilizado.'
+                });
+              }
+            } catch {
+              setOauthFeedback({
+                type: 'error',
+                message: 'No se pudo conectar con el servidor para validar el inicio de sesión con Google.'
+              });
+            }
+          }
+        }
+      }
+
       const savedToken = await storage.getItem(TOKEN_KEY);
       if (savedToken) {
         const payload = decodeJwtPayload(savedToken);
@@ -265,6 +355,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       activeSession,
       hasPersistedSession,
+      oauthFeedback,
+      clearOauthFeedback,
       isAuthenticated,
       login,
       exitApp,
@@ -273,12 +365,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateProfile,
       restoreSession
     }),
-    [user, token, role, loading, activeSession, hasPersistedSession, isAuthenticated, restoreSession]
+    [user, token, role, loading, activeSession, hasPersistedSession, oauthFeedback, clearOauthFeedback, isAuthenticated, restoreSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// Hook personalizado para acceder al contexto de autenticación desde cualquier componente.
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {

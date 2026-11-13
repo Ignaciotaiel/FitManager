@@ -1,3 +1,4 @@
+// Controladores para listar, crear, actualizar y eliminar ejercicios del catálogo.
 import pool from '../config/db.js';
 import { logActivity } from '../services/activityLogService.js';
 

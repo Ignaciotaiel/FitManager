@@ -1,3 +1,4 @@
+// Controladores para gestionar sesiones de entrenamiento, series registradas e historial de progreso.
 import pool from '../config/db.js';
 
 /**

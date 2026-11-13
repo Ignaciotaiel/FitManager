@@ -1,12 +1,15 @@
+// Indicador visual de carga para operaciones asíncronas.
 import React from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { styles } from './LoadingSpinner.styles';
 
 export interface LoadingSpinnerProps {
   message?: string;
   fullScreen?: boolean;
 }
 
+// Renderiza un indicador giratorio de carga acompañado de un mensaje descriptivo.
 export function LoadingSpinner({ message = 'cargando...', fullScreen = false }: LoadingSpinnerProps) {
   const { colors } = useTheme();
 
@@ -21,21 +24,5 @@ export function LoadingSpinner({ message = 'cargando...', fullScreen = false }: 
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  fullScreen: {
-    flex: 1
-  },
-  text: {
-    marginTop: 12,
-    fontSize: 14,
-    fontWeight: '500'
-  }
-});
 
 export default LoadingSpinner;

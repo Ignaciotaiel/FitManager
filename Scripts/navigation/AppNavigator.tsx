@@ -1,14 +1,29 @@
+// Enrutador raíz que selecciona la pila de navegación según el estado de autenticación y rol.
 import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, SafeAreaView } from 'react-native';
 import { useAuth } from '../../contexto/authContext';
 import { useTheme } from '../../contexto/themeContext';
 import { AuthNavigator } from './AuthNavigator';
 import { AdminNavigator } from './AdminNavigator';
 import { TrainerNavigator } from './TrainerNavigator';
 import { MemberNavigator } from './MemberNavigator';
-import { LoadingSpinner, Button, Card } from '../../Modules/components/index';
+import { LoadingSpinner, Button, Card, WebContainer } from '../../Modules/components/index';
+import { styles } from './AppNavigator.styles';
 
-export function AppNavigator() {
+export interface AppNavigatorProps {
+  currentRouteName?: string;
+  canGoBack?: boolean;
+  onNavigate?: (routeName: string, params?: any) => void;
+  onGoBack?: () => void;
+}
+
+// Selecciona el navegador correspondiente según el estado de sesión y rol del usuario.
+export function AppNavigator({
+  currentRouteName,
+  canGoBack,
+  onNavigate,
+  onGoBack
+}: AppNavigatorProps = {}) {
   const { isAuthenticated, loading, role, logout } = useAuth();
   const { colors } = useTheme();
 
@@ -23,20 +38,54 @@ export function AppNavigator() {
 
   // flujo publico cuando no hay sesion autenticada
   if (!isAuthenticated) {
-    return <AuthNavigator />;
+    return (
+      <WebContainer>
+        <AuthNavigator />
+      </WebContainer>
+    );
   }
 
   // navegacion condicional protegida segun el rol autenticado y validado por jwt
   if (role === 'admin') {
-    return <AdminNavigator />;
+    return (
+      <WebContainer
+        maxWidth={1360}
+        currentRouteName={currentRouteName}
+        canGoBack={canGoBack}
+        onNavigate={onNavigate}
+        onGoBack={onGoBack}
+      >
+        <AdminNavigator />
+      </WebContainer>
+    );
   }
 
   if (role === 'trainer') {
-    return <TrainerNavigator />;
+    return (
+      <WebContainer
+        maxWidth={1360}
+        currentRouteName={currentRouteName}
+        canGoBack={canGoBack}
+        onNavigate={onNavigate}
+        onGoBack={onGoBack}
+      >
+        <TrainerNavigator />
+      </WebContainer>
+    );
   }
 
   if (role === 'member') {
-    return <MemberNavigator />;
+    return (
+      <WebContainer
+        maxWidth={1360}
+        currentRouteName={currentRouteName}
+        canGoBack={canGoBack}
+        onNavigate={onNavigate}
+        onGoBack={onGoBack}
+      >
+        <MemberNavigator />
+      </WebContainer>
+    );
   }
 
   // estado de seguridad controlado si el rol devuelto no coincide con ninguno valido
@@ -60,34 +109,5 @@ export function AppNavigator() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1
-  },
-  safeArea: {
-    flex: 1
-  },
-  unknownRoleContainer: {
-    flex: 1,
-    padding: 24,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  unknownRoleCard: {
-    width: '100%',
-    padding: 20
-  },
-  unknownTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    marginBottom: 8
-  },
-  unknownBody: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 16
-  }
-});
 
 export default AppNavigator;

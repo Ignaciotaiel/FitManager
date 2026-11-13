@@ -1,9 +1,9 @@
+// Permite solicitar un código de recuperación de contraseña por correo electrónico.
 import React, { useState } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -19,7 +19,9 @@ import {
   Card,
   StatusBanner
 } from '../../Modules/components/index';
+import { styles } from './ForgotPasswordScreen.styles';
 
+// Pantalla para solicitar el envío de un código de recuperación de contraseña.
 export function ForgotPasswordScreen({ navigation }: ScreenProps<'ForgotPassword'>) {
   const { colors, isDark, toggleTheme } = useTheme();
 
@@ -159,7 +161,7 @@ export function ForgotPasswordScreen({ navigation }: ScreenProps<'ForgotPassword
           </Card>
 
           {/* Nota aclaratoria sobre cuentas vinculadas con Google */}
-          <View style={styles.socialNoticeCard}>
+          <View style={[styles.socialNoticeCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <Text style={[styles.socialNoticeTitle, { color: colors.text }]}>
               ¿Iniciás sesión con Google?
             </Text>
@@ -184,92 +186,5 @@ export function ForgotPasswordScreen({ navigation }: ScreenProps<'ForgotPassword
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  keyboardContainer: {
-    flex: 1
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 24
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16
-  },
-  backButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  backText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  titleSection: {
-    marginBottom: 16
-  },
-  brandLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 4
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  subtitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 6
-  },
-  formCard: {
-    marginTop: 4,
-    padding: 16
-  },
-  submitBtn: {
-    marginTop: 12
-  },
-  socialNoticeCard: {
-    marginTop: 20,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)'
-  },
-  socialNoticeTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 4
-  },
-  socialNoticeBody: {
-    fontSize: 12,
-    lineHeight: 17
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 24,
-    marginBottom: 10
-  },
-  footerText: {
-    fontSize: 13
-  },
-  footerLink: {
-    fontSize: 13,
-    fontWeight: '700'
-  }
-});
 
 export default ForgotPasswordScreen;

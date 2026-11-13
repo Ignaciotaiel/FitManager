@@ -1,5 +1,6 @@
+// Gestiona el registro, filtrado y seguimiento de incidencias en equipos e instalaciones.
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl } from 'react-native';
+import { View, Text, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
@@ -18,6 +19,7 @@ import {
   ScreenTopBar,
   FilterChips
 } from '../../Modules/components/index';
+import { styles } from './IncidentsScreen.styles';
 
 const CATEGORY_LABELS: Record<IncidentCategory, string> = {
   equipment: 'EQUIPAMIENTO',
@@ -50,6 +52,7 @@ const STATUS_FILTER_OPTIONS: { value: IncidentStatus | null; label: string }[] =
   { value: 'resolved', label: STATUS_LABELS.resolved }
 ];
 
+// Pantalla de administración de incidencias con creación, edición y cambio de estado.
 export function IncidentsScreen({ navigation }: ScreenProps<'Incidents'>) {
   const { colors } = useTheme();
   const { token } = useAuth();
@@ -336,31 +339,5 @@ export function IncidentsScreen({ navigation }: ScreenProps<'Incidents'>) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  container: { flex: 1, paddingHorizontal: 16, paddingTop: 8 },
-  listContent: { flexGrow: 1, paddingBottom: 36 },
-  formCard: { padding: 14, marginVertical: 6 },
-  formTitle: { fontSize: 13, fontWeight: '900', letterSpacing: 0.8, marginBottom: 4 },
-  buttonRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
-  flexBtn: { flex: 1, paddingHorizontal: 4 },
-  smallBtnText: { fontSize: 10, letterSpacing: 0.3 },
-  itemCard: { padding: 12, marginVertical: 5 },
-  itemTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
-  itemTitle: { fontSize: 14, fontWeight: '800', flex: 1 },
-  statusTag: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2
-  },
-  itemContent: { fontSize: 13, marginTop: 6, lineHeight: 18 },
-  meta: { fontSize: 11, marginTop: 4 },
-  notes: { fontSize: 12, marginTop: 6, fontStyle: 'italic' }
-});
 
 export default IncidentsScreen;

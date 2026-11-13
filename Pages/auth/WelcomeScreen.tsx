@@ -1,19 +1,37 @@
+// Pantalla inicial de presentación de FitManager con accesos a inicio de sesión y registro.
 import React from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
+  useWindowDimensions
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
-import { Button, Card } from '../../Modules/components/index';
+import { Button, Card, StatusBanner } from '../../Modules/components/index';
+import { styles } from './WelcomeScreen.styles';
 
+// Pantalla de bienvenida adaptable a móvil y escritorio con accesos rápidos de cuenta.
 export function WelcomeScreen({ navigation }: ScreenProps<'Welcome'>) {
   const { colors, isDark, toggleTheme } = useTheme();
-  const { hasPersistedSession, resumeSession, user } = useAuth();
+  const { hasPersistedSession, resumeSession, user, oauthFeedback, clearOauthFeedback } = useAuth();
+  const { width } = useWindowDimensions();
+
+  const isDesktop = Platform.OS === 'web' && width >= 960;
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'bottom', 'left', 'right']}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          isDesktop && styles.scrollContentDesktop
+        ]}
         bounces={false}
         showsVerticalScrollIndicator={false}
       >
@@ -38,177 +56,214 @@ export function WelcomeScreen({ navigation }: ScreenProps<'Welcome'>) {
           </TouchableOpacity>
         </View>
 
-        {/* seccion central de presentacion */}
-        <View style={styles.heroSection}>
-          <Text style={[styles.title, { color: colors.text }]}>
-            GESTIÓN DEPORTIVA Y ENTRENAMIENTO
-          </Text>
-
-          <View style={[styles.accentLine, { backgroundColor: colors.primary }]} />
-
-          <Text style={[styles.description, { color: colors.textSecondary }]}>
-            administrá socios, rutinas y entrenamientos en un solo lugar con seguimiento profesional.
-          </Text>
-
-          {/* caracteristicas funcionales del gimnasio */}
-          <Card style={styles.featuresCard}>
-            <View style={styles.featureItem}>
-              <Text style={[styles.featureBullet, { color: colors.primary }]}>01</Text>
-              <View style={styles.featureTextWrapper}>
-                <Text style={[styles.featureTitle, { color: colors.text }]}>panel por roles</Text>
-                <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
-                  administrador, entrenador y socio
-                </Text>
-              </View>
-            </View>
-
-            <View style={[styles.separator, { backgroundColor: colors.border }]} />
-
-            <View style={styles.featureItem}>
-              <Text style={[styles.featureBullet, { color: colors.primary }]}>02</Text>
-              <View style={styles.featureTextWrapper}>
-                <Text style={[styles.featureTitle, { color: colors.text }]}>rutinas y ejercicios</Text>
-                <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
-                  planificación de series, repeticiones y descansos
-                </Text>
-              </View>
-            </View>
-
-            <View style={[styles.separator, { backgroundColor: colors.border }]} />
-
-            <View style={styles.featureItem}>
-              <Text style={[styles.featureBullet, { color: colors.primary }]}>03</Text>
-              <View style={styles.featureTextWrapper}>
-                <Text style={[styles.featureTitle, { color: colors.text }]}>gestión y seguimiento</Text>
-                <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
-                  control de cuentas y entrenamiento activo
-                </Text>
-              </View>
-            </View>
-          </Card>
-        </View>
-
-        {/* acciones de navegacion */}
-        <View style={styles.actionsSection}>
-          {hasPersistedSession ? (
-            <Button
-              title={`CONTINUAR SESIÓN (${user?.name || user?.email?.split('@')[0] || 'USUARIO'})`}
-              variant="primary"
-              onPress={resumeSession}
-              style={{ marginBottom: 8 }}
+        {oauthFeedback ? (
+          <View style={{ marginBottom: 12 }}>
+            <StatusBanner
+              message={oauthFeedback.message}
+              type={oauthFeedback.type === 'error' ? 'error' : 'warning'}
             />
-          ) : null}
-          <Button
-            title="INICIAR SESIÓN"
-            variant={hasPersistedSession ? 'secondary' : 'primary'}
-            onPress={() => navigation.navigate('Login')}
-          />
-          <Button
-            title="CREAR CUENTA"
-            variant="secondary"
-            onPress={() => navigation.navigate('Register')}
-          />
-        </View>
+          </View>
+        ) : null}
+
+        {isDesktop ? (
+          /* COMPOSICION DE DOS COLUMNAS PARA ESCRITORIO */
+          <View style={styles.desktopGrid}>
+            {/* Columna izquierda: Presentacion, descripcion y caracteristicas */}
+            <View style={styles.desktopLeftCol}>
+              <View
+                style={[
+                  styles.desktopTag,
+                  {
+                    backgroundColor: withAlpha(colors.primary, 0.14),
+                    borderColor: colors.primary
+                  }
+                ]}
+              >
+                <Ionicons name="barbell-outline" size={14} color={colors.primary} />
+                <Text style={[styles.desktopTagText, { color: colors.primary }]}>
+                  PLATAFORMA INTEGRAL DE GIMNASIOS
+                </Text>
+              </View>
+
+              <Text style={[styles.desktopTitle, { color: colors.text }]}>
+                GESTIÓN DEPORTIVA Y ENTRENAMIENTO
+              </Text>
+
+              <View style={[styles.accentLine, { backgroundColor: colors.primary }]} />
+
+              <Text style={[styles.desktopDescription, { color: colors.textSecondary }]}>
+                Administrá socios, rutinas, cargas y evolución deportiva en un único entorno profesional tanto desde tu computadora como desde la app Android.
+              </Text>
+
+              <Card style={styles.featuresCard}>
+                <View style={styles.featureItem}>
+                  <Text style={[styles.featureBullet, { color: colors.primary }]}>01</Text>
+                  <View style={styles.featureTextWrapper}>
+                    <Text style={[styles.featureTitle, { color: colors.text }]}>Panel por roles</Text>
+                    <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
+                      Administrador, entrenador y socio con permisos dedicados
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+                <View style={styles.featureItem}>
+                  <Text style={[styles.featureBullet, { color: colors.primary }]}>02</Text>
+                  <View style={styles.featureTextWrapper}>
+                    <Text style={[styles.featureTitle, { color: colors.text }]}>Rutinas y ejercicios</Text>
+                    <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
+                      Planificación de series, repeticiones, tiempos y asignaciones múltiples
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+                <View style={styles.featureItem}>
+                  <Text style={[styles.featureBullet, { color: colors.primary }]}>03</Text>
+                  <View style={styles.featureTextWrapper}>
+                    <Text style={[styles.featureTitle, { color: colors.text }]}>Seguimiento y métricas</Text>
+                    <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
+                      Gráficos de progreso por ejercicio, auditoría y reportes CSV
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            </View>
+
+            {/* Columna derecha: Tarjeta de acceso a la cuenta */}
+            <View style={styles.desktopRightCol}>
+              <Card style={[styles.accessCard, { borderColor: colors.border }]}>
+                <View
+                  style={[
+                    styles.accessIconWrap,
+                    { backgroundColor: withAlpha(colors.primary, 0.14) }
+                  ]}
+                >
+                  <Ionicons name="shield-checkmark-outline" size={26} color={colors.primary} />
+                </View>
+
+                <Text style={[styles.accessTitle, { color: colors.text }]}>
+                  ACCESO A TU CUENTA
+                </Text>
+                <Text style={[styles.accessSubtitle, { color: colors.textSecondary }]}>
+                  Ingresá con tu cuenta de FitManager o continuá con Google para acceder a tu panel según tu rol asignado.
+                </Text>
+
+                <View style={styles.desktopActionsBox}>
+                  {hasPersistedSession ? (
+                    <Button
+                      title={`CONTINUAR SESIÓN (${user?.name || user?.email?.split('@')[0] || 'USUARIO'})`}
+                      variant="primary"
+                      onPress={() => {
+                        clearOauthFeedback();
+                        resumeSession();
+                      }}
+                    />
+                  ) : null}
+                  <Button
+                    title="INICIAR SESIÓN"
+                    variant={hasPersistedSession ? 'secondary' : 'primary'}
+                    onPress={() => {
+                      clearOauthFeedback();
+                      navigation.navigate('Login');
+                    }}
+                  />
+                  <Button
+                    title="CREAR CUENTA"
+                    variant="secondary"
+                    onPress={() => {
+                      clearOauthFeedback();
+                      navigation.navigate('Register');
+                    }}
+                  />
+                </View>
+
+                <View style={[styles.accessFooterNote, { borderTopColor: colors.border }]}>
+                  <Ionicons name="laptop-outline" size={15} color={colors.textMuted} />
+                  <Text style={[styles.accessFooterText, { color: colors.textMuted }]}>
+                    Sincronizado en tiempo real con la aplicación Android FitManager
+                  </Text>
+                </View>
+              </Card>
+            </View>
+          </View>
+        ) : (
+          /* COMPOSICION MOVIL (INTACTA PARA ANDROID Y PANTALLAS CHICAS) */
+          <>
+            <View style={styles.heroSection}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                GESTIÓN DEPORTIVA Y ENTRENAMIENTO
+              </Text>
+
+              <View style={[styles.accentLine, { backgroundColor: colors.primary }]} />
+
+              <Text style={[styles.description, { color: colors.textSecondary }]}>
+                administrá socios, rutinas y entrenamientos en un solo lugar con seguimiento profesional.
+              </Text>
+
+              <Card style={styles.featuresCard}>
+                <View style={styles.featureItem}>
+                  <Text style={[styles.featureBullet, { color: colors.primary }]}>01</Text>
+                  <View style={styles.featureTextWrapper}>
+                    <Text style={[styles.featureTitle, { color: colors.text }]}>panel por roles</Text>
+                    <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
+                      administrador, entrenador y socio
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+                <View style={styles.featureItem}>
+                  <Text style={[styles.featureBullet, { color: colors.primary }]}>02</Text>
+                  <View style={styles.featureTextWrapper}>
+                    <Text style={[styles.featureTitle, { color: colors.text }]}>rutinas y ejercicios</Text>
+                    <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
+                      planificación de series, repeticiones y descansos
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.separator, { backgroundColor: colors.border }]} />
+
+                <View style={styles.featureItem}>
+                  <Text style={[styles.featureBullet, { color: colors.primary }]}>03</Text>
+                  <View style={styles.featureTextWrapper}>
+                    <Text style={[styles.featureTitle, { color: colors.text }]}>gestión y seguimiento</Text>
+                    <Text style={[styles.featureSubtitle, { color: colors.textSecondary }]}>
+                      control de cuentas y entrenamiento activo
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            </View>
+
+            <View style={styles.actionsSection}>
+              {hasPersistedSession ? (
+                <Button
+                  title={`CONTINUAR SESIÓN (${user?.name || user?.email?.split('@')[0] || 'USUARIO'})`}
+                  variant="primary"
+                  onPress={resumeSession}
+                />
+              ) : null}
+              <Button
+                title="INICIAR SESIÓN"
+                variant={hasPersistedSession ? 'secondary' : 'primary'}
+                onPress={() => navigation.navigate('Login')}
+              />
+              <Button
+                title="CREAR CUENTA"
+                variant="secondary"
+                onPress={() => navigation.navigate('Register')}
+              />
+            </View>
+          </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    justifyContent: 'space-between'
-  },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8
-  },
-  brandBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4
-  },
-  brandText: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 1
-  },
-  themeToggle: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  themeToggleText: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5
-  },
-  heroSection: {
-    marginVertical: 'auto'
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '900',
-    lineHeight: 34,
-    letterSpacing: 0.5
-  },
-  accentLine: {
-    width: 48,
-    height: 4,
-    borderRadius: 2,
-    marginVertical: 14
-  },
-  description: {
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 20
-  },
-  featuresCard: {
-    padding: 14,
-    marginVertical: 0
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6
-  },
-  featureBullet: {
-    fontSize: 14,
-    fontWeight: '800',
-    width: 32
-  },
-  featureTextWrapper: {
-    flex: 1
-  },
-  featureTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    textTransform: 'capitalize'
-  },
-  featureSubtitle: {
-    fontSize: 12,
-    marginTop: 2
-  },
-  separator: {
-    height: 1,
-    marginVertical: 4
-  },
-  actionsSection: {
-    paddingTop: 12
-  }
-});
 
 export default WelcomeScreen;

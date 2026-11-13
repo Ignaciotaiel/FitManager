@@ -1,6 +1,8 @@
+// Barra superior de navegación con título, subtítulo y botón de regreso para pantallas internas.
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Platform, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { styles } from './ScreenTopBar.styles';
 
 export interface ScreenTopBarProps {
   title: string;
@@ -11,9 +13,15 @@ export interface ScreenTopBarProps {
 // barra superior reutilizable (mismo diseno que UsersScreen)
 export function ScreenTopBar({ title, onBack, backLabel = '← VOLVER' }: ScreenTopBarProps) {
   const { colors } = useTheme();
+  const { width } = useWindowDimensions();
+
+  // En escritorio web (>= 768px) el encabezado superior de WebContainer ya muestra el titulo y el boton Volver
+  if (Platform.OS === 'web' && width >= 768) {
+    return null;
+  }
 
   return (
-    <View style={styles.topNavBar}>
+    <View style={[styles.topNavBar, { borderBottomColor: colors.border }]}>
       <TouchableOpacity
         onPress={onBack}
         style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
@@ -29,38 +37,6 @@ export function ScreenTopBar({ title, onBack, backLabel = '← VOLVER' }: Screen
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  topNavBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)'
-  },
-  backBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1
-  },
-  backBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  headerTitle: {
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 0.4
-  },
-  navBarSpacer: {
-    width: 70
-  }
-});
 
 export default ScreenTopBar;
 

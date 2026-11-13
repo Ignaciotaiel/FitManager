@@ -1,19 +1,29 @@
+// Muestra el historial de sesiones de entrenamiento, gráficos de progreso y filtros por fecha.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   FlatList,
   TouchableOpacity,
   RefreshControl,
   Modal,
-  ScrollView
+  ScrollView,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { workoutService } from '../../Modules/workouts/workoutService';
+import {
+  isoToDisplay,
+  formatDateAR,
+  toLocalIsoDate,
+  describePeriod
+} from '../../Modules/utils/dateFormat';
 import {
   DashboardHeader,
   Card,
@@ -21,25 +31,37 @@ import {
   Button,
   StatusBanner,
   LoadingSpinner,
-  EmptyState
+  EmptyState,
+  DateRangeCalendarModal,
+  ExerciseProgressSection
 } from '../../Modules/components/index';
+import type { CalendarTarget } from '../../Modules/components/DateRangeCalendarModal';
+import { styles } from './WorkoutHistoryScreen.styles';
 
+// Pantalla de historial deportivo con filtros por rutina, ejercicio y rango de fechas.
 export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'WorkoutHistory'>) {
   const { colors } = useTheme();
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const targetMemberId = route?.params?.memberId; // Para cuando un trainer o admin consulta el historial de un alumno
   const targetMemberName = route?.params?.memberName;
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 768;
 
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<any>(null);
 
-  // Estados de búsqueda y filtros
+  // Estados de búsqueda y filtros (rango de fechas en ISO para comparación y DD/MM/AAAA en interfaz)
   const [searchRoutine, setSearchRoutine] = useState('');
   const [searchExercise, setSearchExercise] = useState('');
-  const [filterDate, setFilterDate] = useState(''); // Formato YYYY-MM-DD
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+
+  // Calendario visual con selección directa de año y mes
+  const [calendarVisible, setCalendarVisible] = useState(false);
+  const [calendarTarget, setCalendarTarget] = useState<CalendarTarget>('start');
 
   // Modal para ver el detalle de una sesión puntual y sus series
   const [detailModalVisible, setDetailModalVisible] = useState(false);
@@ -81,6 +103,17 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
     loadHistory();
   };
 
+  const openCalendar = (target: CalendarTarget) => {
+    setCalendarTarget(target);
+    setCalendarVisible(true);
+  };
+
+  const handleConfirmDates = (range: { startDate: string; endDate: string }) => {
+    setStartDate(range.startDate);
+    setEndDate(range.endDate);
+    setCalendarVisible(false);
+  };
+
   // Abrir detalle completo de una sesión
   const handleOpenDetail = async (session) => {
     setSelectedSession(session);
@@ -119,23 +152,27 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
         if (!hasMatchingExercise) return false;
       }
 
-      // 3. Filtro por fecha (YYYY-MM-DD o coincidencia de día)
-      if (filterDate.trim()) {
-        const qDate = filterDate.trim();
-        const sessionDateStr = session.session_date ? String(session.session_date) : '';
-        if (!sessionDateStr.includes(qDate)) return false;
+      // 3. Filtro por período de fechas (comparación en ISO local)
+      if (startDate || endDate) {
+        const sessionIso = toLocalIsoDate(session.session_date || session.created_at);
+        if (!sessionIso) return false;
+        if (startDate && sessionIso < startDate) return false;
+        if (endDate && sessionIso > endDate) return false;
       }
 
       return true;
     });
-  }, [sessions, searchRoutine, searchExercise, filterDate]);
+  }, [sessions, searchRoutine, searchExercise, startDate, endDate]);
 
-  const hasActiveFilters = Boolean(searchRoutine.trim() || searchExercise.trim() || filterDate.trim());
+  const hasActiveFilters = Boolean(
+    searchRoutine.trim() || searchExercise.trim() || startDate || endDate
+  );
 
   const handleClearFilters = () => {
     setSearchRoutine('');
     setSearchExercise('');
-    setFilterDate('');
+    setStartDate('');
+    setEndDate('');
   };
 
   // Agrupar las series de la sesión seleccionada por ejercicio para mostrarlas ordenadas
@@ -161,14 +198,8 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
 
   const renderSessionItem = ({ item }) => {
     const setsCount = Array.isArray(item.sets) ? item.sets.length : 0;
-    const isCompleted = item.status === 'completed' || item.status === null; // Las sesiones históricas con NULL se tratan como pasadas
     const formattedDate = item.session_date
-      ? new Date(item.session_date).toLocaleDateString(undefined, {
-          weekday: 'short',
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric'
-        })
+      ? formatDateAR(item.session_date)
       : 'Fecha sin especificar';
 
     // Obtener nombres únicos de ejercicios entrenados en esta sesión
@@ -192,15 +223,15 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
             style={[
               styles.statusPill,
               {
-                backgroundColor: item.status === 'in_progress' ? 'rgba(255, 179, 0, 0.15)' : 'rgba(57, 255, 20, 0.12)',
-                borderColor: item.status === 'in_progress' ? colors.warning || '#ffb300' : colors.primary
+                backgroundColor: item.status === 'in_progress' ? withAlpha(colors.warning, 0.15) : withAlpha(colors.primary, 0.12),
+                borderColor: item.status === 'in_progress' ? colors.warning : colors.primary
               }
             ]}
           >
             <Text
               style={[
                 styles.statusPillText,
-                { color: item.status === 'in_progress' ? colors.warning || '#ffb300' : colors.primary }
+                { color: item.status === 'in_progress' ? colors.warning : colors.primary }
               ]}
             >
               {item.status === 'in_progress' ? 'EN CURSO' : 'FINALIZADO'}
@@ -258,76 +289,178 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
     );
   };
 
-  return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
-      <View style={styles.container}>
-        {/* Barra superior con volver */}
-        <View style={styles.topNavBar}>
+  const listHeader = (
+    <View>
+      {/* Sección integrada de Evolución y Gráficos por Ejercicio */}
+      {sessions.length > 0 && (
+        <ExerciseProgressSection
+          token={token}
+          memberId={targetMemberId}
+          memberName={targetMemberName}
+          sessions={sessions}
+        />
+      )}
+
+      {/* Barra de Filtros y Búsqueda */}
+      <View style={[styles.filterCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.filterHeaderRow}>
+          <Text style={[styles.filterHeaderTitle, { color: colors.text }]}>
+            🔍 FILTROS DE SESIONES {hasActiveFilters ? `(${filteredSessions.length} resultados)` : ''}
+          </Text>
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            onPress={() => setShowFilters(prev => !prev)}
+            style={[styles.toggleFilterBtn, { borderColor: colors.border }]}
             accessibilityRole="button"
           >
-            <Text style={[styles.backBtnText, { color: colors.text }]}>← VOLVER</Text>
+            <Text style={[styles.toggleFilterText, { color: colors.primary }]}>
+              {showFilters ? 'OCULTAR ▲' : 'EXPANDIR ▼'}
+            </Text>
           </TouchableOpacity>
         </View>
 
+        {showFilters && (
+          <View style={styles.filterInputsContainer}>
+            <Input
+              label="BUSCAR POR RUTINA"
+              placeholder="ej. Fuerza, Piernas, Libre"
+              value={searchRoutine}
+              onChangeText={setSearchRoutine}
+            />
+            <Input
+              label="BUSCAR POR EJERCICIO"
+              placeholder="ej. Press de Banca, Sentadilla"
+              value={searchExercise}
+              onChangeText={setSearchExercise}
+            />
+
+            {/* Selector de fecha en formato argentino DD/MM/AAAA */}
+            <View style={styles.dateFilterSection}>
+              <View style={styles.dateFilterLabelRow}>
+                <Text style={[styles.dateFilterLabel, { color: colors.textSecondary }]}>
+                  FILTRAR POR FECHA (DD/MM/AAAA)
+                </Text>
+                {(startDate || endDate) && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setStartDate('');
+                      setEndDate('');
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.clearDatesText, { color: colors.primary }]}>
+                      BORRAR FECHAS
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.dateButtonsRow}>
+                <TouchableOpacity
+                  onPress={() => openCalendar('start')}
+                  activeOpacity={0.85}
+                  style={[
+                    styles.dateBtn,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: startDate ? colors.primary : colors.border
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="seleccionar fecha desde"
+                >
+                  <View style={styles.dateBtnTop}>
+                    <Text style={[styles.dateBtnCaption, { color: colors.textMuted }]}>DESDE</Text>
+                    <Ionicons
+                      name="calendar-outline"
+                      size={14}
+                      color={startDate ? colors.primary : colors.textSecondary}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.dateBtnValue,
+                      { color: startDate ? colors.text : colors.textMuted }
+                    ]}
+                  >
+                    {startDate ? isoToDisplay(startDate) : 'DD/MM/AAAA'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => openCalendar('end')}
+                  activeOpacity={0.85}
+                  style={[
+                    styles.dateBtn,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: endDate ? colors.primary : colors.border
+                    }
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="seleccionar fecha hasta"
+                >
+                  <View style={styles.dateBtnTop}>
+                    <Text style={[styles.dateBtnCaption, { color: colors.textMuted }]}>HASTA</Text>
+                    <Ionicons
+                      name="calendar-outline"
+                      size={14}
+                      color={endDate ? colors.primary : colors.textSecondary}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.dateBtnValue,
+                      { color: endDate ? colors.text : colors.textMuted }
+                    ]}
+                  >
+                    {endDate ? isoToDisplay(endDate) : 'DD/MM/AAAA'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {(startDate || endDate) && (
+                <Text style={[styles.periodActiveText, { color: colors.primary }]}>
+                  Período: {describePeriod(startDate, endDate)}
+                </Text>
+              )}
+            </View>
+
+            {hasActiveFilters && (
+              <Button
+                title="LIMPIAR TODOS LOS FILTROS ✕"
+                variant="secondary"
+                onPress={handleClearFilters}
+                style={styles.clearFiltersBtn}
+              />
+            )}
+          </View>
+        )}
+      </View>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      <View style={styles.container}>
+        {/* Barra superior con volver (en web de escritorio la provee WebContainer) */}
+        {!isDesktopWeb && (
+          <View style={styles.topNavBar}>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={[styles.backBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.backBtnText, { color: colors.text }]}>← VOLVER</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <DashboardHeader
-          title={targetMemberName ? `HISTORIAL: ${targetMemberName.toUpperCase()}` : "HISTORIAL DE ENTRENAMIENTOS"}
-          subtitle={targetMemberName ? "seguimiento y marcas del alumno" : "registro cronológico de tus sesiones y marcas logradas"}
+          title={targetMemberName ? `HISTORIAL: ${targetMemberName.toUpperCase()}` : 'HISTORIAL DE ENTRENAMIENTOS'}
+          subtitle={targetMemberName ? 'seguimiento, evolución y marcas del alumno' : 'registro cronológico de tus sesiones y progreso de cargas'}
         />
 
         {errorMessage && <StatusBanner message={errorMessage} type="error" />}
-
-        {/* Barra de Filtros y Búsqueda */}
-        <View style={[styles.filterCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <View style={styles.filterHeaderRow}>
-            <Text style={[styles.filterHeaderTitle, { color: colors.text }]}>
-              🔍 FILTROS Y BÚSQUEDA {hasActiveFilters ? `(${filteredSessions.length} resultados)` : ''}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowFilters(prev => !prev)}
-              style={[styles.toggleFilterBtn, { borderColor: colors.border }]}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.toggleFilterText, { color: colors.primary }]}>
-                {showFilters ? 'OCULTAR ▲' : 'EXPANDIR ▼'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {showFilters && (
-            <View style={styles.filterInputsContainer}>
-              <Input
-                label="BUSCAR POR RUTINA"
-                placeholder="ej. Fuerza, Piernas, Libre"
-                value={searchRoutine}
-                onChangeText={setSearchRoutine}
-              />
-              <Input
-                label="BUSCAR POR EJERCICIO"
-                placeholder="ej. Press de Banca, Sentadilla"
-                value={searchExercise}
-                onChangeText={setSearchExercise}
-              />
-              <Input
-                label="FILTRAR POR FECHA (AAAA-MM-DD)"
-                placeholder="ej. 2026-10-28"
-                value={filterDate}
-                onChangeText={setFilterDate}
-              />
-
-              {hasActiveFilters && (
-                <Button
-                  title="LIMPIAR TODOS LOS FILTROS ✕"
-                  variant="secondary"
-                  onPress={handleClearFilters}
-                  style={styles.clearFiltersBtn}
-                />
-              )}
-            </View>
-          )}
-        </View>
 
         {loading ? (
           <LoadingSpinner message="cargando historial..." fullScreen />
@@ -336,6 +469,7 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
             data={filteredSessions}
             keyExtractor={item => String(item.id)}
             renderItem={renderSessionItem}
+            ListHeaderComponent={listHeader}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             refreshControl={
@@ -343,12 +477,26 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
             }
             ListEmptyComponent={
               <EmptyState
-                title={hasActiveFilters ? "sin resultados para los filtros" : "sin entrenamientos registrados"}
-                description={hasActiveFilters ? "probá ajustando el nombre de la rutina, ejercicio o fecha." : "cuando finalices tu primer entrenamiento, vas a poder consultar el detalle de todos tus pesos y repeticiones acá."}
+                title={hasActiveFilters ? 'sin resultados para los filtros' : 'sin entrenamientos registrados'}
+                description={hasActiveFilters ? 'probá ajustando el nombre de la rutina, ejercicio o el período de fechas.' : 'cuando finalices tu primer entrenamiento, vas a poder consultar el detalle de todos tus pesos y repeticiones acá.'}
               />
             }
           />
         )}
+
+        {/* Modal de Calendario para filtrar sesiones por fecha */}
+        <DateRangeCalendarModal
+          visible={calendarVisible}
+          initialStartDate={startDate}
+          initialEndDate={endDate}
+          initialTarget={calendarTarget}
+          onConfirm={handleConfirmDates}
+          onClear={() => {
+            setStartDate('');
+            setEndDate('');
+          }}
+          onClose={() => setCalendarVisible(false)}
+        />
 
         {/* Modal de Detalle Completo de una Sesión */}
         <Modal
@@ -357,18 +505,13 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
           transparent
           onRequestClose={() => setDetailModalVisible(false)}
         >
-          <View style={styles.modalOverlay}>
+          <View style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}>
             <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={styles.modalHeader}>
+              <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.modalDate, { color: colors.primary }]}>
                     {selectedSession?.session_date
-                      ? new Date(selectedSession.session_date).toLocaleDateString(undefined, {
-                          weekday: 'long',
-                          day: '2-digit',
-                          month: 'long',
-                          year: 'numeric'
-                        })
+                      ? formatDateAR(selectedSession.session_date)
                       : 'Detalle de Sesión'}
                   </Text>
                   <Text style={[styles.modalTitle, { color: colors.text }]}>
@@ -413,7 +556,7 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
                   ) : (
                     (groupedSets as any[]).map((group: any) => (
                       <View key={String(group.exercise_id || group.exercise_name)} style={[styles.exerciseGroupCard, { borderColor: colors.border, backgroundColor: colors.background }]}>
-                        <View style={styles.groupHeader}>
+                        <View style={[styles.groupHeader, { borderBottomColor: colors.border }]}>
                           <Text style={[styles.groupExName, { color: colors.text }]}>
                             {group.exercise_name}
                           </Text>
@@ -464,271 +607,5 @@ export function WorkoutHistoryScreen({ route, navigation }: ScreenProps<'Workout
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 16
-  },
-  topNavBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    marginTop: 4
-  },
-  backBtn: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 14
-  },
-  backBtnText: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  listContent: {
-    paddingBottom: 32
-  },
-  filterCard: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14
-  },
-  filterHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  filterHeaderTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.5
-  },
-  toggleFilterBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1
-  },
-  toggleFilterText: {
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  filterInputsContainer: {
-    marginTop: 10,
-    gap: 6
-  },
-  clearFiltersBtn: {
-    marginTop: 6
-  },
-  modalDuration: {
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 2
-  },
-  sessionCard: {
-    marginBottom: 14,
-    padding: 16,
-    borderWidth: 1
-  },
-  sessionCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12
-  },
-  sessionDate: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    marginBottom: 4
-  },
-  routineTitle: {
-    fontSize: 18,
-    fontWeight: '800'
-  },
-  statusPill: {
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4
-  },
-  statusPillText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5
-  },
-  statsRow: {
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 12
-  },
-  statBox: {
-    flex: 1
-  },
-  statLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    marginBottom: 2
-  },
-  statVal: {
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  exerciseTagsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 14
-  },
-  tag: {
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4
-  },
-  tagText: {
-    fontSize: 12,
-    fontWeight: '600'
-  },
-  detailBtn: {
-    marginTop: 4
-  },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'center',
-    padding: 16
-  },
-  modalCard: {
-    maxHeight: '85%',
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 18
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    paddingBottom: 12,
-    marginBottom: 14
-  },
-  modalDate: {
-    fontSize: 12,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    marginBottom: 4
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '800'
-  },
-  modalCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  modalCloseText: {
-    fontSize: 16,
-    fontWeight: '700'
-  },
-  modalScroll: {
-    maxHeight: '75%'
-  },
-  notesBox: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 14
-  },
-  notesLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    marginBottom: 2
-  },
-  notesText: {
-    fontSize: 13,
-    lineHeight: 18
-  },
-  detailSectionTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    marginBottom: 10
-  },
-  noSetsText: {
-    fontSize: 14,
-    fontStyle: 'italic',
-    marginVertical: 12
-  },
-  exerciseGroupCard: {
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 10
-  },
-  groupHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-    borderBottomWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    paddingBottom: 6
-  },
-  groupExName: {
-    fontSize: 15,
-    fontWeight: '800'
-  },
-  groupMuscle: {
-    fontSize: 12,
-    fontWeight: '600'
-  },
-  setsTable: {
-    gap: 6
-  },
-  setRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4
-  },
-  setNumBadge: {
-    fontSize: 13,
-    fontWeight: '800',
-    width: 40
-  },
-  setKgText: {
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1
-  },
-  setRepsText: {
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-    textAlign: 'center'
-  },
-  setRpeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    textAlign: 'right',
-    width: 60
-  }
-});
 
 export default WorkoutHistoryScreen;

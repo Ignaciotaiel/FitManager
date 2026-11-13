@@ -1,6 +1,8 @@
+// Campo de entrada de texto reutilizable con etiqueta, validación y alternancia de contraseña.
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, StyleProp, ViewStyle, TextInputProps } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleProp, ViewStyle, TextInputProps } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { styles } from './Input.styles';
 
 export interface InputProps extends Omit<TextInputProps, 'style'> {
   label?: string;
@@ -13,6 +15,7 @@ export interface InputProps extends Omit<TextInputProps, 'style'> {
   style?: StyleProp<ViewStyle>;
 }
 
+// Renderiza un campo de texto controlado con soporte para contraseñas y mensajes de error.
 export function Input({
   label,
   value,
@@ -67,7 +70,7 @@ export function Input({
             style={styles.eyeButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityRole="button"
-            accessibilityLabel={showPassword ? 'ocultar contrasena' : 'mostrar contrasena'}
+            accessibilityLabel={showPassword ? 'ocultar contraseña' : 'mostrar contraseña'}
           >
             <Text style={[styles.eyeText, { color: colors.primary }]}>
               {showPassword ? 'ocultar' : 'ver'}
@@ -84,45 +87,5 @@ export function Input({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    marginVertical: 6,
-    width: '100%'
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 12,
-    borderWidth: 1,
-    minHeight: 48,
-    paddingHorizontal: 14
-  },
-  input: {
-    flex: 1,
-    fontSize: 15,
-    paddingVertical: 12
-  },
-  eyeButton: {
-    paddingLeft: 8
-  },
-  eyeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase'
-  },
-  errorText: {
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: '500'
-  }
-});
 
 export default Input;

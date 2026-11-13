@@ -1,3 +1,4 @@
+// Servicio de envío de correos transaccionales mediante webhook HTTPS de Google Apps Script.
 import dotenv from 'dotenv';
 
 dotenv.config();

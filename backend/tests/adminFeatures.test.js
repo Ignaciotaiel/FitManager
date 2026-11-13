@@ -1,8 +1,11 @@
+// Pruebas automatizadas de auditoría, notificaciones, incidencias y exportación para el rol admin.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import pool from '../config/db.js';
 import adminRoutes from '../routes/adminRoutes.js';
+import { getActiveNotificationsForUser, markNotificationsAsRead } from '../controllers/adminController.js';
 
 describe('Pruebas de Funcionalidades ADMIN: Logs, Notificaciones, Incidencias y Exportación', () => {
   let app;
@@ -376,6 +379,7 @@ describe('Proteccion real de rutas /api/admin (router de produccion, sin base de
     ['PUT', '/notifications/1'],
     ['DELETE', '/notifications/1'],
     ['GET', '/notifications/active'],
+    ['POST', '/notifications/read'],
     ['GET', '/incidents'],
     ['POST', '/incidents'],
     ['PATCH', '/incidents/1'],
@@ -400,5 +404,264 @@ describe('Proteccion real de rutas /api/admin (router de produccion, sin base de
 
   test('Todos los endpoints rechazan un token invalido con 401', async () => {
     await callAll({ Authorization: 'Bearer token.invalido.firma' });
+  });
+});
+
+describe('Control individual de avisos nuevos y leídos por usuario (Escenarios 1 a 6)', () => {
+  let originalExecute;
+  let server;
+  let baseUrl;
+  const jwtSecret = 'test_notif_reads_secret';
+
+  // Usuarios de prueba: 1 Admin, 1 Entrenador, 2 Socios independientes
+  const users = [
+    { id: 10, name: 'Admin Gym', email: 'admin@gym.com', role: 'admin', is_active: 1 },
+    { id: 20, name: 'Trainer Ana', email: 'ana@gym.com', role: 'trainer', is_active: 1 },
+    { id: 30, name: 'Socio Lucas', email: 'lucas@gym.com', role: 'member', is_active: 1 },
+    { id: 31, name: 'Socia Sofia', email: 'sofia@gym.com', role: 'member', is_active: 1 }
+  ];
+
+  let notificationsStore = [];
+  let readsStore = []; // [{ notification_id, user_id, read_at }]
+  let nextId = 1;
+
+  const tokenFor = (userId) => {
+    const u = users.find((x) => x.id === userId);
+    return `Bearer ${jwt.sign({ id: u.id, email: u.email, role: u.role }, jwtSecret)}`;
+  };
+
+  before(async () => {
+    originalExecute = pool.execute.bind(pool);
+
+    // Mock de pool.execute para evaluar las consultas SQL reales de getActiveNotificationsForUser y markNotificationsAsRead
+    pool.execute = async (sql, params = []) => {
+      const normalized = sql.replace(/\s+/g, ' ').trim();
+
+      if (normalized.startsWith('CREATE TABLE IF NOT EXISTS notification_reads')) {
+        return [{}, []];
+      }
+
+      if (normalized.includes('FROM admin_notifications n LEFT JOIN notification_reads nr') && normalized.includes('SELECT n.id')) {
+        const [userId, userRole] = params;
+        const active = notificationsStore
+          .filter((n) => n.is_active === 1 && (n.target_role === 'all' || n.target_role === userRole))
+          .map((n) => {
+            const readRecord = readsStore.find(
+              (r) => Number(r.notification_id) === Number(n.id) && Number(r.user_id) === Number(userId)
+            );
+            return {
+              id: n.id,
+              title: n.title,
+              content: n.content,
+              target_role: n.target_role,
+              created_at: n.created_at,
+              read_at: readRecord ? readRecord.read_at : null
+            };
+          });
+        return [active, []];
+      }
+
+      if (normalized.startsWith('SELECT id FROM admin_notifications WHERE is_active = 1')) {
+        const userRole = params[0];
+        const filterIds = params.slice(1).map(Number);
+        const rows = notificationsStore
+          .filter((n) => {
+            const roleMatch = n.is_active === 1 && (n.target_role === 'all' || n.target_role === userRole);
+            const idMatch = filterIds.length === 0 || filterIds.includes(Number(n.id));
+            return roleMatch && idMatch;
+          })
+          .map((n) => ({ id: n.id }));
+        return [rows, []];
+      }
+
+      if (normalized.startsWith('INSERT IGNORE INTO notification_reads')) {
+        const [notificationId, userId] = params;
+        const exists = readsStore.some(
+          (r) => Number(r.notification_id) === Number(notificationId) && Number(r.user_id) === Number(userId)
+        );
+        if (!exists) {
+          readsStore.push({
+            notification_id: Number(notificationId),
+            user_id: Number(userId),
+            read_at: new Date().toISOString()
+          });
+        }
+        return [{ affectedRows: exists ? 0 : 1 }, []];
+      }
+
+      if (normalized.includes('SELECT COUNT(*) AS unread_count FROM admin_notifications n')) {
+        const [userId, userRole] = params;
+        const unreadCount = notificationsStore.filter((n) => {
+          const visible = n.is_active === 1 && (n.target_role === 'all' || n.target_role === userRole);
+          const isRead = readsStore.some(
+            (r) => Number(r.notification_id) === Number(n.id) && Number(r.user_id) === Number(userId)
+          );
+          return visible && !isRead;
+        }).length;
+        return [[{ unread_count: unreadCount }], []];
+      }
+
+      return [[], []];
+    };
+
+    const app = express();
+    app.use(express.json());
+    const authMiddleware = (req, res, next) => {
+      const header = req.headers.authorization || '';
+      const decoded = jwt.verify(header.replace('Bearer ', ''), jwtSecret);
+      req.user = decoded;
+      next();
+    };
+    app.get('/api/admin/notifications/active', authMiddleware, getActiveNotificationsForUser);
+    app.post('/api/admin/notifications/read', authMiddleware, markNotificationsAsRead);
+
+    await new Promise((resolve) => {
+      server = app.listen(0, () => {
+        baseUrl = `http://127.0.0.1:${server.address().port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    pool.execute = originalExecute;
+    if (server) await new Promise((resolve) => server.close(resolve));
+  });
+
+  test('Escenario 1: Admin publica aviso para todos ("all") -> entrenador y socio ven indicador de no leído', async () => {
+    notificationsStore.push({
+      id: nextId++,
+      title: 'Horario Feriado Nacional',
+      content: 'El gimnasio abrirá de 9 a 14 hs.',
+      target_role: 'all',
+      is_active: 1,
+      created_at: new Date().toISOString()
+    });
+
+    const trainerRes = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(20) }
+      })
+    ).json();
+    assert.equal(trainerRes.ok, true);
+    assert.equal(trainerRes.data.unread_count, 1);
+    assert.equal(trainerRes.data.notifications[0].is_read, false);
+
+    const memberRes = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(30) }
+      })
+    ).json();
+    assert.equal(memberRes.ok, true);
+    assert.equal(memberRes.data.unread_count, 1);
+    assert.equal(memberRes.data.notifications[0].is_read, false);
+  });
+
+  test('Escenario 2: Admin publica aviso solo para socios ("member") -> el socio lo ve y el entrenador NO lo ve', async () => {
+    notificationsStore.push({
+      id: nextId++,
+      title: 'Promoción Renovación Cuota',
+      content: '15% de descuento abonando en recepción.',
+      target_role: 'member',
+      is_active: 1,
+      created_at: new Date().toISOString()
+    });
+
+    const trainerRes = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(20) }
+      })
+    ).json();
+    assert.equal(trainerRes.data.notifications.length, 1);
+    assert.equal(trainerRes.data.unread_count, 1);
+
+    const memberRes = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(30) }
+      })
+    ).json();
+    assert.equal(memberRes.data.notifications.length, 2);
+    assert.equal(memberRes.data.unread_count, 2);
+  });
+
+  test('Escenario 3: Un socio lee el aviso -> desaparece su indicador, sigue en su historial y NO afecta a otro socio', async () => {
+    const markRes = await (
+      await fetch(`${baseUrl}/api/admin/notifications/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: tokenFor(30) },
+        body: JSON.stringify({})
+      })
+    ).json();
+    assert.equal(markRes.ok, true);
+    assert.equal(markRes.data.unread_count, 0);
+
+    // Socio 1 (id 30): sin avisos pendientes pero conserva los 2 avisos en su historial
+    const member1After = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(30) }
+      })
+    ).json();
+    assert.equal(member1After.data.unread_count, 0);
+    assert.equal(member1After.data.notifications.length, 2);
+    assert.equal(member1After.data.notifications.every((n) => n.is_read === true), true);
+
+    // Socia 2 (id 31): conserva ambos avisos como no leídos
+    const member2Check = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(31) }
+      })
+    ).json();
+    assert.equal(member2Check.data.unread_count, 2);
+    assert.equal(member2Check.data.notifications.every((n) => n.is_read === false), true);
+  });
+
+  test('Escenario 4: El entrenador lee sus avisos -> no afecta el estado pendiente de los socios', async () => {
+    const trainerMark = await (
+      await fetch(`${baseUrl}/api/admin/notifications/read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: tokenFor(20) },
+        body: JSON.stringify({})
+      })
+    ).json();
+    assert.equal(trainerMark.ok, true);
+    assert.equal(trainerMark.data.unread_count, 0);
+
+    // Socia 2 (id 31) sigue teniendo sus 2 avisos sin leer
+    const member2Check = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(31) }
+      })
+    ).json();
+    assert.equal(member2Check.data.unread_count, 2);
+  });
+
+  test('Escenario 5 y 6: Admin publica un segundo aviso general -> el indicador vuelve a aparecer y persiste al reingresar', async () => {
+    notificationsStore.push({
+      id: nextId++,
+      title: 'Nueva Clase de Funcional',
+      content: 'Sumamos horarios martes y jueves 19 hs.',
+      target_role: 'all',
+      is_active: 1,
+      created_at: new Date().toISOString()
+    });
+
+    // Socio 1 (que ya había leído los 2 anteriores) ahora tiene exactamente 1 aviso nuevo
+    const newTokenAfterRelogin = tokenFor(30);
+    const member1Relogin = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: newTokenAfterRelogin }
+      })
+    ).json();
+    assert.equal(member1Relogin.data.notifications.length, 3);
+    assert.equal(member1Relogin.data.unread_count, 1);
+
+    // Entrenador (que había leído el primero) ahora también vuelve a ver 1 aviso nuevo
+    const trainerRelogin = await (
+      await fetch(`${baseUrl}/api/admin/notifications/active`, {
+        headers: { Authorization: tokenFor(20) }
+      })
+    ).json();
+    assert.equal(trainerRelogin.data.notifications.length, 2);
+    assert.equal(trainerRelogin.data.unread_count, 1);
   });
 });

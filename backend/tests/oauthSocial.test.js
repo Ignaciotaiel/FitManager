@@ -1,3 +1,4 @@
+// Pruebas automatizadas de los flujos OAuth 2.0 (Google Web, GitHub y Discord) y canje de tickets.
 import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -580,5 +581,41 @@ describe('Pruebas Exhaustivas: OAuth 2.0 (GitHub y Discord) para APK Android', (
     } finally {
       global.fetch = originalFetch;
     }
+  });
+
+  test('16. Google Web OAuth: preserva returnOrigin en state y emite ticket de uso único', async () => {
+    const state = generateOAuthState('google', 'web', 'http://localhost:8081');
+    const stateCheck = consumeOAuthState(state, 'google');
+    assert.strictEqual(stateCheck.valid, true);
+    assert.strictEqual(stateCheck.platform, 'web');
+    assert.strictEqual(stateCheck.returnOrigin, 'http://localhost:8081');
+
+    // Reutilizar el mismo state falla (anti-CSRF de un solo uso)
+    const replayState = consumeOAuthState(state, 'google');
+    assert.strictEqual(replayState.valid, false);
+    assert.strictEqual(replayState.error, 'STATE_INVALID');
+
+    // Emitir ticket de Google Web y canjearlo por JWT
+    const mockGoogleUser = {
+      id: nextUserId++,
+      name: 'Google Web User',
+      email: 'webuser@gmail.com',
+      role: 'member',
+      is_active: 1,
+      token_version: 1,
+      email_verified_at: new Date()
+    };
+    mockUsers.push(mockGoogleUser);
+
+    const ticket = createLoginTicket(mockGoogleUser, 'google');
+    const exchangeRes = await fetch(`${baseUrl}/api/test-oauth/exchange-ticket`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket })
+    });
+    assert.strictEqual(exchangeRes.status, 200);
+    const exchangeData = await exchangeRes.json();
+    assert.strictEqual(exchangeData.ok, true);
+    assert.strictEqual(exchangeData.data.user.email, 'webuser@gmail.com');
   });
 });

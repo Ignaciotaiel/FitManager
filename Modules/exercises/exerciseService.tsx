@@ -1,3 +1,4 @@
+// Centraliza las consultas y operaciones CRUD sobre el catálogo de ejercicios.
 import apiClient from '../api/client';
 
 // servicio desacoplado para interactuar con los endpoints de ejercicios

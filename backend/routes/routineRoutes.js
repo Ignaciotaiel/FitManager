@@ -1,3 +1,4 @@
+// Define las rutas de gestión de rutinas y asignaciones (/api/routines).
 import { Router } from 'express';
 import {
   listRoutines,

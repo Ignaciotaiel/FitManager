@@ -24,15 +24,17 @@ setInterval(() => {
 
 /**
  * Genera un state criptográfico seguro para CSRF y lo guarda asociado al proveedor
- * @param {'github'|'discord'} provider
+ * @param {'google'|'github'|'discord'} provider
  * @param {string} [platform='android']
+ * @param {string|null} [returnOrigin=null]
  * @returns {string} state
  */
-export function generateOAuthState(provider, platform = 'android') {
+export function generateOAuthState(provider, platform = 'android', returnOrigin = null) {
   const state = crypto.randomBytes(32).toString('hex');
   oauthStates.set(state, {
     provider,
     platform,
+    returnOrigin,
     createdAt: Date.now(),
     expiresAt: Date.now() + STATE_TTL_MS
   });
@@ -42,8 +44,8 @@ export function generateOAuthState(provider, platform = 'android') {
 /**
  * Valida y consume (un solo uso) el state OAuth
  * @param {string} state
- * @param {'github'|'discord'} expectedProvider
- * @returns {{ valid: boolean, error?: string, platform?: string }}
+ * @param {'google'|'github'|'discord'} expectedProvider
+ * @returns {{ valid: boolean, error?: string, platform?: string, returnOrigin?: string|null }}
  */
 export function consumeOAuthState(state, expectedProvider) {
   if (!state || typeof state !== 'string') {
@@ -66,7 +68,11 @@ export function consumeOAuthState(state, expectedProvider) {
     return { valid: false, error: 'STATE_PROVIDER_MISMATCH' };
   }
 
-  return { valid: true, platform: record.platform };
+  return {
+    valid: true,
+    platform: record.platform,
+    returnOrigin: record.returnOrigin || null
+  };
 }
 
 /**

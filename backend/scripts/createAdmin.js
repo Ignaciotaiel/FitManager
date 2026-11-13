@@ -1,3 +1,4 @@
+// Script interactivo de consola para crear o promover una cuenta de administrador de forma segura.
 import readline from 'readline';
 import bcrypt from 'bcrypt';
 import pool from '../config/db.js';
@@ -64,6 +65,7 @@ function askQuestion(query, hidden = false) {
   });
 }
 
+// Ejecuta el asistente interactivo en consola para crear o actualizar un administrador.
 async function main() {
   console.log('\n======================================================');
   console.log('   FitManager — Inicializador de Administrador CLI    ');

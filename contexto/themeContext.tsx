@@ -1,3 +1,4 @@
+// Contexto global del tema visual con soporte para modo claro, oscuro y persistencia local.
 import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { darkColors, lightColors, ThemeColors } from '../Styles/theme/colors';
@@ -31,6 +32,7 @@ interface ThemeProviderProps {
   children: ReactNode;
 }
 
+// Proveedor que gestiona la paleta de colores activa y la alternancia entre modo claro y oscuro.
 export function ThemeProvider({ children }: ThemeProviderProps) {
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [loading, setLoading] = useState<boolean>(true);
@@ -90,6 +92,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
+// Hook personalizado para consumir los colores y funciones del tema visual.
 export function useTheme(): ThemeContextValue {
   const context = useContext(ThemeContext);
   if (!context) {

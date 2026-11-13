@@ -1,3 +1,4 @@
+// Pruebas automatizadas de sesiones de entrenamiento, series, cronómetro y permisos de acceso.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';

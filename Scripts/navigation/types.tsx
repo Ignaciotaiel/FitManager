@@ -1,3 +1,4 @@
+// Define los tipos de parámetros de todas las rutas de navegación de la aplicación.
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 // pantallas compartidas entre varios roles
@@ -19,10 +20,11 @@ export type AuthStackParamList = {
   ResetPassword: { email: string; resetToken: string };
 };
 
-// navegacion del administrador (incluye las 4 funciones administrativas nuevas)
+// navegacion del administrador (incluye las funciones administrativas y supervision de rutinas)
 export type AdminStackParamList = CommonStackParamList & {
   AdminDashboard: undefined;
   Users: undefined;
+  AdminRoutines: undefined;
   ActivityLog: undefined;
   Notifications: undefined;
   Incidents: undefined;

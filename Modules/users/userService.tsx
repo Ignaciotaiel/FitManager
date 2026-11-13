@@ -1,3 +1,4 @@
+// Centraliza las solicitudes de consulta y administración de usuarios y roles.
 import apiClient from '../api/client';
 
 // servicio para interactuar con los endpoints de usuarios existentes en el backend

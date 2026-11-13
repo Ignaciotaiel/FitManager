@@ -1,3 +1,4 @@
+// Centraliza las solicitudes relacionadas con las rutinas de entrenamiento y asignaciones de socios.
 import apiClient from '../api/client';
 
 // servicio desacoplado para interactuar con los endpoints de rutinas

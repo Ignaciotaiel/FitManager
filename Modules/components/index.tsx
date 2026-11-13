@@ -1,3 +1,4 @@
+// Punto de exportación unificado para todos los componentes visuales reutilizables.
 export { Button } from './Button';
 export { Input } from './Input';
 export { Card } from './Card';
@@ -12,4 +13,6 @@ export { ScreenTopBar } from './ScreenTopBar';
 export { FilterChips } from './FilterChips';
 export { MemberPickerModal } from './MemberPickerModal';
 export { DateRangeCalendarModal } from './DateRangeCalendarModal';
+export { ExerciseProgressSection } from './ExerciseProgressSection';
 
+export { WebContainer } from './WebContainer';

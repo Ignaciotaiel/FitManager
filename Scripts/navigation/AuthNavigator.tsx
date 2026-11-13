@@ -1,3 +1,4 @@
+// Configura la pila de navegación pública para bienvenida, inicio de sesión, registro y recuperación.
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { WelcomeScreen } from '../../Pages/auth/WelcomeScreen';
@@ -12,6 +13,7 @@ import type { AuthStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
 
+// Define las pantallas públicas del flujo de autenticación y recuperación.
 export function AuthNavigator() {
   const { colors } = useTheme();
 

@@ -1,9 +1,9 @@
+// Calendario interactivo para filtrar registros por fecha única o rango en formato argentino.
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Modal,
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
   ScrollView
 } from 'react-native';
@@ -13,6 +13,7 @@ import { useTheme } from '../../contexto/themeContext';
 import { withAlpha } from '../../Styles/theme/colors';
 import {
   MONTH_NAMES_ES,
+  MONTH_SHORT_ES,
   WEEKDAY_LABELS_ES,
   dateToIso,
   isoToDate,
@@ -24,6 +25,7 @@ import {
 } from '../utils/dateFormat';
 import Button from './Button';
 import StatusBanner from './StatusBanner';
+import { styles } from './DateRangeCalendarModal.styles';
 
 export type CalendarTarget = 'start' | 'end';
 
@@ -37,8 +39,10 @@ export interface DateRangeCalendarModalProps {
   onClose: () => void;
 }
 
+const YEAR_PAGE_SIZE = 12;
+
 // calendario visual compatible con Expo SDK 58 (sin dependencias externas)
-// muestra fechas en formato argentino DD-MM-AAAA y emite valores ISO AAAA-MM-DD para el backend
+// muestra fechas en formato argentino DD/MM/AAAA y emite valores ISO AAAA-MM-DD para el backend
 export function DateRangeCalendarModal({
   visible,
   initialStartDate = '',
@@ -56,7 +60,13 @@ export function DateRangeCalendarModal({
   const [draftEnd, setDraftEnd] = useState<string>(initialEndDate);
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // modo selector directo de año y mes (sin presionar repetidamente las flechas)
+  const [pickerMode, setPickerMode] = useState<boolean>(false);
+
   const today = useMemo(() => todayIso(), []);
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
+  const minYear = 2000;
+  const maxYear = currentYear + 5;
 
   const initialFocusDate = useMemo(() => {
     const candidate =
@@ -69,6 +79,10 @@ export function DateRangeCalendarModal({
 
   const [viewYear, setViewYear] = useState<number>(initialFocusDate.getFullYear());
   const [viewMonth, setViewMonth] = useState<number>(initialFocusDate.getMonth());
+  const [yearBlockStart, setYearBlockStart] = useState<number>(() => {
+    const baseYear = initialFocusDate.getFullYear();
+    return Math.max(minYear, Math.min(baseYear - 7, maxYear - YEAR_PAGE_SIZE + 1));
+  });
 
   useEffect(() => {
     if (visible) {
@@ -76,20 +90,48 @@ export function DateRangeCalendarModal({
       setDraftEnd(initialEndDate || '');
       setActiveTarget(initialTarget);
       setValidationError(null);
+      setPickerMode(false);
       const base =
         (initialTarget === 'end' ? isoToDate(initialEndDate) : isoToDate(initialStartDate)) ||
         isoToDate(initialStartDate) ||
         isoToDate(initialEndDate) ||
         new Date();
-      setViewYear(base.getFullYear());
+      const targetYear = base.getFullYear();
+      setViewYear(targetYear);
       setViewMonth(base.getMonth());
+      setYearBlockStart(
+        Math.max(minYear, Math.min(targetYear - 7, maxYear - YEAR_PAGE_SIZE + 1))
+      );
     }
-  }, [visible, initialStartDate, initialEndDate, initialTarget]);
+  }, [visible, initialStartDate, initialEndDate, initialTarget, maxYear]);
+
+  const openYearMonthPicker = () => {
+    setYearBlockStart(
+      Math.max(minYear, Math.min(viewYear - 7, maxYear - YEAR_PAGE_SIZE + 1))
+    );
+    setPickerMode((prev) => !prev);
+  };
+
+  const yearOptions = useMemo(() => {
+    const list: number[] = [];
+    for (let i = 0; i < YEAR_PAGE_SIZE; i += 1) {
+      const y = yearBlockStart + i;
+      if (y <= maxYear) list.push(y);
+    }
+    return list;
+  }, [yearBlockStart, maxYear]);
+
+  const shiftYearBlock = (delta: number) => {
+    setYearBlockStart((prev) => {
+      const next = prev + delta;
+      return Math.max(minYear, Math.min(next, maxYear - YEAR_PAGE_SIZE + 1));
+    });
+  };
 
   const goPrevMonth = () => {
     if (viewMonth === 0) {
       setViewMonth(11);
-      setViewYear((y) => y - 1);
+      setViewYear((y) => Math.max(minYear, y - 1));
     } else {
       setViewMonth((m) => m - 1);
     }
@@ -98,7 +140,7 @@ export function DateRangeCalendarModal({
   const goNextMonth = () => {
     if (viewMonth === 11) {
       setViewMonth(0);
-      setViewYear((y) => y + 1);
+      setViewYear((y) => Math.min(maxYear, y + 1));
     } else {
       setViewMonth((m) => m + 1);
     }
@@ -147,6 +189,7 @@ export function DateRangeCalendarModal({
 
   const applyPreset = (preset: 'today' | 'last7' | 'month') => {
     setValidationError(null);
+    setPickerMode(false);
     const now = new Date();
     const endIso = dateToIso(now);
 
@@ -217,7 +260,7 @@ export function DateRangeCalendarModal({
               </TouchableOpacity>
             </View>
 
-            {/* Selectores de campo activo: DESDE y HASTA en formato DD-MM-AAAA */}
+            {/* Selectores de campo activo: DESDE y HASTA en formato DD/MM/AAAA */}
             <View style={styles.rangeTabsRow}>
               <TouchableOpacity
                 onPress={() => {
@@ -254,7 +297,7 @@ export function DateRangeCalendarModal({
                   ) : null}
                 </View>
                 <Text style={[styles.rangeTabValue, { color: colors.text }]}>
-                  {draftStart ? isoToDisplay(draftStart) : 'DD-MM-AAAA'}
+                  {draftStart ? isoToDisplay(draftStart) : 'DD/MM/AAAA'}
                 </Text>
               </TouchableOpacity>
 
@@ -293,7 +336,7 @@ export function DateRangeCalendarModal({
                   ) : null}
                 </View>
                 <Text style={[styles.rangeTabValue, { color: colors.text }]}>
-                  {draftEnd ? isoToDisplay(draftEnd) : 'DD-MM-AAAA'}
+                  {draftEnd ? isoToDisplay(draftEnd) : 'DD/MM/AAAA'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -320,24 +363,45 @@ export function DateRangeCalendarModal({
               </TouchableOpacity>
             </View>
 
-            {/* Navegacion de mes y año */}
+            {/* Navegacion de mes y año con boton directo para elegir año y mes */}
             <View style={[styles.monthNav, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <TouchableOpacity
                 onPress={goPrevMonth}
-                style={styles.monthArrowBtn}
+                disabled={pickerMode}
+                style={[styles.monthArrowBtn, pickerMode && { opacity: 0.35 }]}
                 accessibilityRole="button"
                 accessibilityLabel="mes anterior"
               >
                 <Ionicons name="chevron-back" size={20} color={colors.text} />
               </TouchableOpacity>
 
-              <Text style={[styles.monthTitle, { color: colors.text }]}>
-                {MONTH_NAMES_ES[viewMonth].toUpperCase()} {viewYear}
-              </Text>
+              <TouchableOpacity
+                onPress={openYearMonthPicker}
+                activeOpacity={0.8}
+                style={[
+                  styles.monthTitleButton,
+                  {
+                    backgroundColor: pickerMode ? withAlpha(colors.primary, 0.14) : 'transparent',
+                    borderColor: pickerMode ? colors.primary : 'transparent'
+                  }
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="seleccionar directamente mes y año"
+              >
+                <Text style={[styles.monthTitle, { color: pickerMode ? colors.primary : colors.text }]}>
+                  {MONTH_NAMES_ES[viewMonth].toUpperCase()} {viewYear}
+                </Text>
+                <Ionicons
+                  name={pickerMode ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={colors.primary}
+                />
+              </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={goNextMonth}
-                style={styles.monthArrowBtn}
+                disabled={pickerMode}
+                style={[styles.monthArrowBtn, pickerMode && { opacity: 0.35 }]}
                 accessibilityRole="button"
                 accessibilityLabel="mes siguiente"
               >
@@ -345,79 +409,211 @@ export function DateRangeCalendarModal({
               </TouchableOpacity>
             </View>
 
-            {/* Cabecera de dias de la semana (L a D) */}
-            <View style={styles.weekdaysRow}>
-              {WEEKDAY_LABELS_ES.map((label, idx) => (
-                <View key={`wd-${idx}`} style={styles.weekdayCell}>
-                  <Text style={[styles.weekdayText, { color: colors.textMuted }]}>{label}</Text>
-                </View>
-              ))}
-            </View>
-
-            {/* Grilla del mes */}
-            <View style={styles.daysGrid}>
-              {cells.map((cell) => {
-                if (!cell.iso || cell.day === null) {
-                  return <View key={cell.key} style={styles.dayCell} />;
-                }
-
-                const iso = cell.iso;
-                const isStart = Boolean(draftStart && iso === draftStart);
-                const isEnd = Boolean(draftEnd && iso === draftEnd);
-                const isSelectedEndpoint = isStart || isEnd;
-                const isInRange = Boolean(
-                  draftStart && draftEnd && iso > draftStart && iso < draftEnd
-                );
-                const isDisabledForEnd = Boolean(
-                  activeTarget === 'end' && draftStart && iso < draftStart
-                );
-                const isToday = iso === today;
-
-                return (
-                  <TouchableOpacity
-                    key={cell.key}
-                    onPress={() => handleSelectDay(iso)}
-                    disabled={isDisabledForEnd}
-                    activeOpacity={0.75}
-                    style={[
-                      styles.dayCell,
-                      isInRange && { backgroundColor: withAlpha(colors.primary, 0.14) },
-                      isSelectedEndpoint && {
-                        backgroundColor: colors.primary,
-                        borderRadius: 10
-                      },
-                      !isSelectedEndpoint &&
-                        isToday && {
-                          borderWidth: 1,
-                          borderColor: colors.primary,
-                          borderRadius: 10
-                        }
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${isoToDisplay(iso)}`}
-                  >
-                    <Text
+            {pickerMode ? (
+              /* Vista de seleccion directa de Año y Mes */
+              <View style={[styles.yearMonthPickerBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.yearHeaderRow}>
+                  <Text style={[styles.pickerSectionLabel, { color: colors.textMuted }]}>
+                    SELECCIONAR AÑO ({yearOptions[0]} - {yearOptions[yearOptions.length - 1]})
+                  </Text>
+                  <View style={styles.yearPageControls}>
+                    <TouchableOpacity
+                      onPress={() => shiftYearBlock(-YEAR_PAGE_SIZE)}
+                      disabled={yearBlockStart <= minYear}
                       style={[
-                        styles.dayText,
-                        {
-                          color: isSelectedEndpoint
-                            ? colors.primaryText
-                            : isDisabledForEnd
-                              ? colors.textMuted
-                              : isInRange
-                                ? colors.primary
-                                : colors.text,
-                          opacity: isDisabledForEnd ? 0.35 : 1,
-                          fontWeight: isSelectedEndpoint || isToday ? '900' : '600'
-                        }
+                        styles.yearPageBtn,
+                        { borderColor: colors.border, backgroundColor: colors.card },
+                        yearBlockStart <= minYear && { opacity: 0.35 }
                       ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="años anteriores"
                     >
-                      {cell.day}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      <Ionicons name="chevron-back" size={15} color={colors.text} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => shiftYearBlock(YEAR_PAGE_SIZE)}
+                      disabled={yearBlockStart + YEAR_PAGE_SIZE > maxYear}
+                      style={[
+                        styles.yearPageBtn,
+                        { borderColor: colors.border, backgroundColor: colors.card },
+                        yearBlockStart + YEAR_PAGE_SIZE > maxYear && { opacity: 0.35 }
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityLabel="años siguientes"
+                    >
+                      <Ionicons name="chevron-forward" size={15} color={colors.text} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={styles.pickerGrid}>
+                  {yearOptions.map((yr) => {
+                    const selected = yr === viewYear;
+                    const isCurrentYr = yr === currentYear;
+                    return (
+                      <TouchableOpacity
+                        key={`yr-${yr}`}
+                        onPress={() => setViewYear(yr)}
+                        activeOpacity={0.8}
+                        style={[
+                          styles.pickerCell,
+                          {
+                            backgroundColor: selected ? colors.primary : colors.card,
+                            borderColor: selected
+                              ? colors.primary
+                              : isCurrentYr
+                                ? withAlpha(colors.primary, 0.5)
+                                : colors.border
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`año ${yr}`}
+                      >
+                        <Text
+                          style={[
+                            styles.pickerCellText,
+                            {
+                              color: selected ? colors.primaryText : colors.text,
+                              fontWeight: selected || isCurrentYr ? '900' : '700'
+                            }
+                          ]}
+                        >
+                          {yr}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.pickerSectionLabel, { color: colors.textMuted, marginTop: 10, marginBottom: 6 }]}>
+                  SELECCIONAR MES DE {viewYear}
+                </Text>
+
+                <View style={styles.pickerGrid}>
+                  {MONTH_SHORT_ES.map((mLabel, mIdx) => {
+                    const selected = mIdx === viewMonth;
+                    return (
+                      <TouchableOpacity
+                        key={`mo-${mIdx}`}
+                        onPress={() => {
+                          setViewMonth(mIdx);
+                          setPickerMode(false);
+                        }}
+                        activeOpacity={0.8}
+                        style={[
+                          styles.pickerCell,
+                          {
+                            backgroundColor: selected ? colors.primary : colors.card,
+                            borderColor: selected ? colors.primary : colors.border
+                          }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`mes ${MONTH_NAMES_ES[mIdx]} ${viewYear}`}
+                      >
+                        <Text
+                          style={[
+                            styles.pickerCellText,
+                            {
+                              color: selected ? colors.primaryText : colors.text,
+                              fontWeight: selected ? '900' : '700'
+                            }
+                          ]}
+                        >
+                          {mLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => setPickerMode(false)}
+                  style={[styles.backToDaysBtn, { borderColor: colors.primary, backgroundColor: withAlpha(colors.primary, 0.12) }]}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="calendar-outline" size={14} color={colors.primary} />
+                  <Text style={[styles.backToDaysText, { color: colors.primary }]}>
+                    VER DÍAS DE {MONTH_NAMES_ES[viewMonth].toUpperCase()} {viewYear}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {/* Cabecera de dias de la semana (L a D) */}
+                <View style={styles.weekdaysRow}>
+                  {WEEKDAY_LABELS_ES.map((label, idx) => (
+                    <View key={`wd-${idx}`} style={styles.weekdayCell}>
+                      <Text style={[styles.weekdayText, { color: colors.textMuted }]}>{label}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* Grilla del mes */}
+                <View style={styles.daysGrid}>
+                  {cells.map((cell) => {
+                    if (!cell.iso || cell.day === null) {
+                      return <View key={cell.key} style={styles.dayCell} />;
+                    }
+
+                    const iso = cell.iso;
+                    const isStart = Boolean(draftStart && iso === draftStart);
+                    const isEnd = Boolean(draftEnd && iso === draftEnd);
+                    const isSelectedEndpoint = isStart || isEnd;
+                    const isInRange = Boolean(
+                      draftStart && draftEnd && iso > draftStart && iso < draftEnd
+                    );
+                    const isDisabledForEnd = Boolean(
+                      activeTarget === 'end' && draftStart && iso < draftStart
+                    );
+                    const isToday = iso === today;
+
+                    return (
+                      <TouchableOpacity
+                        key={cell.key}
+                        onPress={() => handleSelectDay(iso)}
+                        disabled={isDisabledForEnd}
+                        activeOpacity={0.75}
+                        style={[
+                          styles.dayCell,
+                          isInRange && { backgroundColor: withAlpha(colors.primary, 0.14) },
+                          isSelectedEndpoint && {
+                            backgroundColor: colors.primary,
+                            borderRadius: 10
+                          },
+                          !isSelectedEndpoint &&
+                            isToday && {
+                              borderWidth: 1,
+                              borderColor: colors.primary,
+                              borderRadius: 10
+                            }
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${isoToDisplay(iso)}`}
+                      >
+                        <Text
+                          style={[
+                            styles.dayText,
+                            {
+                              color: isSelectedEndpoint
+                                ? colors.primaryText
+                                : isDisabledForEnd
+                                  ? colors.textMuted
+                                  : isInRange
+                                    ? colors.primary
+                                    : colors.text,
+                              opacity: isDisabledForEnd ? 0.35 : 1,
+                              fontWeight: isSelectedEndpoint || isToday ? '900' : '600'
+                            }
+                          ]}
+                        >
+                          {cell.day}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
 
             {/* Resumen del período seleccionado */}
             <View style={[styles.periodBanner, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -454,166 +650,6 @@ export function DateRangeCalendarModal({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 16
-  },
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    maxHeight: '92%',
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 14
-  },
-  scrollContent: {
-    paddingBottom: 4
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12
-  },
-  headerTitleWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 0.6
-  },
-  closeIconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  rangeTabsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10
-  },
-  rangeTab: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8
-  },
-  rangeTabTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  rangeTabLabel: {
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5
-  },
-  rangeTabValue: {
-    fontSize: 13,
-    fontWeight: '900',
-    marginTop: 4,
-    letterSpacing: 0.4
-  },
-  presetsRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 10
-  },
-  presetChip: {
-    flex: 1,
-    paddingVertical: 6,
-    paddingHorizontal: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center'
-  },
-  presetChipText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.4
-  },
-  monthNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    marginBottom: 8
-  },
-  monthArrowBtn: {
-    padding: 4
-  },
-  monthTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.8
-  },
-  weekdaysRow: {
-    flexDirection: 'row',
-    marginBottom: 4
-  },
-  weekdayCell: {
-    width: '14.2857%',
-    alignItems: 'center',
-    paddingVertical: 4
-  },
-  weekdayText: {
-    fontSize: 11,
-    fontWeight: '800'
-  },
-  daysGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 10
-  },
-  dayCell: {
-    width: '14.2857%',
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 1
-  },
-  dayText: {
-    fontSize: 13
-  },
-  periodBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginBottom: 8
-  },
-  periodBannerText: {
-    fontSize: 12,
-    flex: 1
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 4
-  },
-  actionBtn: {
-    flex: 1
-  }
-});
 
 export default DateRangeCalendarModal;
 

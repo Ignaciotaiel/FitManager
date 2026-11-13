@@ -1,14 +1,15 @@
-﻿import React from 'react';
+// Botón reutilizable con variantes visuales, indicador de carga y estados de interacción.
+import React from 'react';
 import {
   TouchableOpacity,
   Text,
-  StyleSheet,
   ActivityIndicator,
   StyleProp,
   ViewStyle,
   TextStyle
 } from 'react-native';
 import { useTheme } from '../../contexto/themeContext';
+import { styles } from './Button.styles';
 
 export interface ButtonProps {
   title: string;
@@ -20,6 +21,7 @@ export interface ButtonProps {
   textStyle?: StyleProp<TextStyle>;
 }
 
+// Renderiza un botón adaptable al tema con soporte para variantes, tamaños y estado de carga.
 export function Button({
   title,
   onPress,
@@ -86,24 +88,6 @@ export function Button({
     </TouchableOpacity>
   );
 }
-
-const styles = StyleSheet.create({
-  baseButton: {
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 48,
-    marginVertical: 4
-  },
-  baseText: {
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textAlign: 'center'
-  }
-});
 
 export default Button;
 

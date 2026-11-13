@@ -7,10 +7,12 @@ export function isValidEmail(email) {
   return regex.test(email.trim());
 }
 
+// Comprueba si el rol indicado pertenece a los roles válidos del sistema.
 export function isValidRole(role) {
   return ['admin', 'trainer', 'member'].includes(role);
 }
 
+// Verifica que la contraseña cumpla con la longitud mínima requerida.
 export function isValidPassword(password) {
   // minima longitud para garantizar seguridad de contrasenas
   return typeof password === 'string' && password.length >= 6;

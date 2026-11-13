@@ -1,9 +1,9 @@
+// Gestiona la validación del código de 6 dígitos enviado por correo al registrar una cuenta.
 import React, { useState, useEffect } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
   Text,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
   KeyboardAvoidingView,
@@ -15,7 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext';
 import { authService } from '../../Modules/auth/authService';
 import { Button, Card, StatusBanner } from '../../Modules/components/index';
+import { styles } from './EmailVerificationScreen.styles';
 
+// Pantalla para ingresar o reenviar el código de verificación de correo electrónico.
 export function EmailVerificationScreen({ route, navigation }: ScreenProps<'EmailVerification'>) {
   const { colors } = useTheme();
   const initialEmail = route?.params?.email || '';
@@ -132,7 +134,7 @@ export function EmailVerificationScreen({ route, navigation }: ScreenProps<'Emai
 
           {/* Tarjeta de Verificación */}
           <Card style={styles.card}>
-            <View style={styles.iconContainer}>
+            <View style={[styles.iconContainer, { backgroundColor: colors.surface }]}>
               <Text style={styles.iconEmoji}>✉️</Text>
             </View>
 
@@ -230,115 +232,5 @@ export function EmailVerificationScreen({ route, navigation }: ScreenProps<'Emai
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1
-  },
-  keyboardContainer: {
-    flex: 1
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    justifyContent: 'center'
-  },
-  header: {
-    marginBottom: 16
-  },
-  backButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderRadius: 8,
-    alignSelf: 'flex-start'
-  },
-  backText: {
-    fontSize: 14,
-    fontWeight: '600'
-  },
-  card: {
-    padding: 24,
-    borderRadius: 16,
-    alignItems: 'center'
-  },
-  iconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#1f2937',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16
-  },
-  iconEmoji: {
-    fontSize: 30
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    textAlign: 'center'
-  },
-  subtitle: {
-    fontSize: 14,
-    textAlign: 'center'
-  },
-  emailBadge: {
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 4,
-    marginBottom: 20,
-    textAlign: 'center'
-  },
-  banner: {
-    width: '100%',
-    marginBottom: 16
-  },
-  codeContainer: {
-    width: '100%',
-    marginBottom: 20
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 8,
-    textAlign: 'center'
-  },
-  codeInput: {
-    height: 60,
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: 10,
-    textAlign: 'center',
-    borderWidth: 1.5,
-    borderRadius: 12,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace'
-  },
-  helperText: {
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 8
-  },
-  verifyButton: {
-    width: '100%',
-    marginBottom: 16
-  },
-  resendContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8
-  },
-  resendText: {
-    fontSize: 14
-  },
-  resendLink: {
-    fontSize: 14,
-    fontWeight: '700'
-  }
-});
 
 export default EmailVerificationScreen;

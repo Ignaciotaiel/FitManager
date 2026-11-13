@@ -1,3 +1,4 @@
+// Define las rutas de sesiones de entrenamiento, series e historial (/api/workouts).
 import { Router } from 'express';
 import {
   createSession,

@@ -1,5 +1,6 @@
+// Permite generar y descargar informes CSV de las entidades principales del sistema.
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import { useTheme } from '../../contexto/themeContext';
@@ -7,6 +8,7 @@ import { useAuth } from '../../contexto/authContext';
 import { adminService, ExportEntity } from '../../Modules/admin/adminService';
 import { exportRecordsToCsvFile } from '../../Modules/admin/csv';
 import { Card, Button, StatusBanner, ScreenTopBar } from '../../Modules/components/index';
+import { styles } from './ReportsExportScreen.styles';
 
 interface ReportOption {
   entity: ExportEntity;
@@ -24,6 +26,7 @@ const REPORTS: ReportOption[] = [
   { entity: 'incidents', title: 'INCIDENCIAS', description: 'incidencias del gimnasio y su estado.' }
 ];
 
+// Pantalla para seleccionar y exportar conjuntos de datos en formato CSV.
 export function ReportsExportScreen({ navigation }: ScreenProps<'ReportsExport'>) {
   const { colors } = useTheme();
   const { token } = useAuth();
@@ -92,14 +95,5 @@ export function ReportsExportScreen({ navigation }: ScreenProps<'ReportsExport'>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 36 },
-  intro: { fontSize: 13, lineHeight: 18, marginBottom: 8 },
-  reportCard: { padding: 14, marginVertical: 5 },
-  reportTitle: { fontSize: 14, fontWeight: '800' },
-  reportDesc: { fontSize: 12, lineHeight: 17, marginTop: 3, marginBottom: 8 }
-});
 
 export default ReportsExportScreen;

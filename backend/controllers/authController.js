@@ -1,3 +1,4 @@
+// Controladores de autenticación local, verificación por correo, recuperación de clave y flujos OAuth 2.0.
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -703,6 +704,32 @@ export async function getCurrentUser(req, res, next) {
 
 // placeholders arquitectonicos seguros para inicio de sesion social
 // no simulan exito; informan explicitamente la falta de credenciales oauth configuradas
+// Valida estrictamente que el origen web solicitado sea localhost/127.0.0.1 o este en CORS_ALLOWED_ORIGINS
+function resolveSafeWebReturnOrigin(rawOrigin) {
+  if (!rawOrigin || typeof rawOrigin !== 'string') return null;
+  const trimmed = rawOrigin.trim().replace(/\/+$/, '');
+  const localRegex = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+  if (localRegex.test(trimmed)) return trimmed;
+
+  const allowed = (process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+  if (allowed.includes(trimmed)) return trimmed;
+
+  return null;
+}
+
+// Construye la URL de retorno segura tras el callback OAuth (web o esquema nativo android)
+function buildOAuthClientRedirect(provider, paramsObj, platform = 'android', returnOrigin = null) {
+  const query = new URLSearchParams(paramsObj).toString();
+  if (platform === 'web') {
+    const safeOrigin = resolveSafeWebReturnOrigin(returnOrigin) || 'http://localhost:8081';
+    return `${safeOrigin}/?oauth_provider=${encodeURIComponent(provider)}&${query}`;
+  }
+  return `fitmanager://oauth/${provider}?${query}`;
+}
+
 // inicio o verificacion de estado de configuracion de google
 export function oauthGoogle(req, res) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -717,10 +744,202 @@ export function oauthGoogle(req, res) {
     });
   }
 
-  // redirigir o procesar url de autorizacion de google cuando esten cargadas las credenciales
-  const callbackUrl = process.env.GOOGLE_CALLBACK_URL || 'fitmanager://oauth';
-  const redirectUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code&scope=openid%20profile%20email`;
+  const platform = req.query?.platform === 'web' ? 'web' : 'android';
+  const safeOrigin = platform === 'web' ? resolveSafeWebReturnOrigin(req.query?.return_origin) : null;
+  const state = generateOAuthState('google', platform, safeOrigin);
+
+  const callbackUrl = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/api/auth/google/callback';
+  const authParams = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: callbackUrl,
+    response_type: 'code',
+    scope: 'openid profile email',
+    state,
+    prompt: 'select_account'
+  });
+
+  const redirectUrl = `https://accounts.google.com/o/oauth2/v2/auth?${authParams.toString()}`;
   res.redirect(redirectUrl);
+}
+
+// Callback oficial de Google OAuth (GET /api/auth/google/callback)
+// Valida state contra CSRF, canjea el code en el servidor con GOOGLE_CLIENT_SECRET y emite un ticket de un solo uso
+export async function oauthGoogleCallback(req, res) {
+  let connection;
+  try {
+    const { code, state, error: oauthError } = req.query;
+
+    // 1. Validar y consumir state de un solo uso antes de cualquier operacion
+    const stateCheck = consumeOAuthState(state, 'google');
+    const platform = stateCheck.platform || 'web';
+    const returnOrigin = stateCheck.returnOrigin || null;
+
+    if (oauthError) {
+      return res.redirect(
+        buildOAuthClientRedirect('google', { error: String(oauthError) }, platform, returnOrigin)
+      );
+    }
+
+    if (!stateCheck.valid) {
+      return res.redirect(
+        buildOAuthClientRedirect('google', { error: 'INVALID_OR_EXPIRED_STATE' }, platform, returnOrigin)
+      );
+    }
+
+    if (!code) {
+      return res.redirect(
+        buildOAuthClientRedirect('google', { error: 'MISSING_AUTH_CODE' }, platform, returnOrigin)
+      );
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const callbackUrl = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/api/auth/google/callback';
+
+    if (!clientId || !clientSecret) {
+      return res.redirect(
+        buildOAuthClientRedirect('google', { error: 'OAUTH_NOT_CONFIGURED' }, platform, returnOrigin)
+      );
+    }
+
+    // 2. Canjear authorization code por tokens en el servidor de Google
+    const tokenParams = new URLSearchParams({
+      code: String(code),
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: callbackUrl,
+      grant_type: 'authorization_code'
+    });
+
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: tokenParams.toString()
+    });
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenData.access_token) {
+      return res.redirect(
+        buildOAuthClientRedirect(
+          'google',
+          { error: tokenData.error || 'GOOGLE_TOKEN_EXCHANGE_FAILED' },
+          platform,
+          returnOrigin
+        )
+      );
+    }
+
+    // 3. Obtener perfil verificado desde Google userinfo
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    });
+    const googleUser = await userInfoResponse.json();
+
+    if (!userInfoResponse.ok || !googleUser.sub) {
+      return res.redirect(
+        buildOAuthClientRedirect('google', { error: 'GOOGLE_PROFILE_ERROR' }, platform, returnOrigin)
+      );
+    }
+
+    const providerUserId = String(googleUser.sub);
+    const email = googleUser.email ? googleUser.email.trim().toLowerCase() : null;
+    const emailVerified = googleUser.email_verified === true || googleUser.email_verified === 'true';
+    const name = googleUser.name || (email ? email.split('@')[0] : 'Usuario Google');
+
+    // 4. Vincular o crear usuario en MariaDB (misma regla de negocio que verifyGoogleAuth)
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [socialRows] = await connection.execute(
+      `SELECT sa.id AS social_account_id, u.id AS id, u.name, u.email, u.role, u.is_active, u.token_version
+       FROM social_accounts sa
+       INNER JOIN users u ON sa.user_id = u.id
+       WHERE sa.provider = 'google' AND sa.provider_user_id = ?`,
+      [providerUserId]
+    );
+
+    let authenticatedUser;
+
+    if (socialRows.length > 0) {
+      authenticatedUser = socialRows[0];
+      if (!authenticatedUser.is_active) {
+        await connection.rollback();
+        return res.redirect(
+          buildOAuthClientRedirect('google', { error: 'ACCOUNT_INACTIVE' }, platform, returnOrigin)
+        );
+      }
+    } else {
+      let existingUser = null;
+      if (email && emailVerified) {
+        const [userRows] = await connection.execute(
+          'SELECT id, name, email, role, is_active, token_version FROM users WHERE email = ?',
+          [email]
+        );
+        if (userRows.length > 0) {
+          existingUser = userRows[0];
+        }
+      }
+
+      if (existingUser) {
+        if (!existingUser.is_active) {
+          await connection.rollback();
+          return res.redirect(
+            buildOAuthClientRedirect('google', { error: 'ACCOUNT_INACTIVE' }, platform, returnOrigin)
+          );
+        }
+        await connection.execute(
+          'INSERT INTO social_accounts (user_id, provider, provider_user_id) VALUES (?, ?, ?)',
+          [existingUser.id, 'google', providerUserId]
+        );
+        authenticatedUser = existingUser;
+      } else {
+        const finalEmail = email || `google_${providerUserId}@fitmanager.social`;
+        const verifiedAtValue = emailVerified ? new Date() : null;
+        const [insertUserRes] = await connection.execute(
+          'INSERT INTO users (name, email, password_hash, role, is_active, email_verified_at) VALUES (?, ?, NULL, ?, 1, ?)',
+          [name, finalEmail, 'member', verifiedAtValue]
+        );
+        const newUserId = insertUserRes.insertId;
+
+        await connection.execute(
+          'INSERT INTO social_accounts (user_id, provider, provider_user_id) VALUES (?, ?, ?)',
+          [newUserId, 'google', providerUserId]
+        );
+
+        authenticatedUser = {
+          id: newUserId,
+          name,
+          email: finalEmail,
+          role: 'member',
+          is_active: 1,
+          token_version: 1
+        };
+      }
+    }
+
+    await connection.commit();
+
+    // 5. Emitir ticket efimero de un solo uso (jamás se expone el JWT en la URL)
+    const ticket = createLoginTicket(authenticatedUser, 'google');
+
+    return res.redirect(
+      buildOAuthClientRedirect('google', { ticket }, platform, returnOrigin)
+    );
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch {}
+    }
+    console.error('[oauthGoogleCallback] Error:', error.message);
+    return res.redirect(
+      buildOAuthClientRedirect('google', { error: 'INTERNAL_SERVER_ERROR' }, 'web', null)
+    );
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
 }
 
 // canjear codigo de autorizacion o validar token de google de forma segura en el backend
@@ -963,6 +1182,7 @@ export async function verifyGoogleAuth(req, res, next) {
   }
 }
 
+// Inicia el flujo de autorización OAuth 2.0 con GitHub generando un estado anti-CSRF.
 export function oauthGithub(req, res) {
   const clientId = process.env.GITHUB_CLIENT_ID;
   if (!clientId) {
@@ -984,6 +1204,7 @@ export function oauthGithub(req, res) {
   res.redirect(redirectUrl);
 }
 
+// Procesa el callback de GitHub, valida el correo verificado y emite un ticket de sesión.
 export async function oauthGithubCallback(req, res, next) {
   let connection;
   try {
@@ -1164,6 +1385,7 @@ export async function oauthGithubCallback(req, res, next) {
   }
 }
 
+// Inicia el flujo de autorización OAuth 2.0 con Discord generando un estado anti-CSRF.
 export function oauthDiscord(req, res) {
   const clientId = process.env.DISCORD_CLIENT_ID;
   if (!clientId) {
@@ -1185,6 +1407,7 @@ export function oauthDiscord(req, res) {
   res.redirect(redirectUrl);
 }
 
+// Procesa el callback de Discord, vincula la cuenta social y emite un ticket de sesión.
 export async function oauthDiscordCallback(req, res, next) {
   let connection;
   try {
