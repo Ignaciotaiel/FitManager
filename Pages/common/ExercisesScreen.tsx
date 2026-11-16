@@ -1,5 +1,5 @@
-// Muestra el catálogo de ejercicios y técnicas con búsqueda y gestión para entrenadores y administradores.
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+// Muestra el catálogo de ejercicios y técnicas con búsqueda, sincronización automática entre dispositivos y gestión para entrenadores y administradores.
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ScreenProps } from '../../Scripts/navigation/types';
 import {
   View,
@@ -11,12 +11,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  AppState,
   useWindowDimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexto/themeContext';
+import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
-import { exerciseService } from '../../Modules/exercises/exerciseService';
+import {
+  exerciseService,
+  reconcileExercisesState,
+  groupExercisesByMuscleGroup,
+  normalizeMuscleGroupKey,
+  MuscleGroupSection
+} from '../../Modules/exercises/exerciseService';
+import { cleanDisplayText } from '../../Modules/utils/dateFormat';
 import {
   Card,
   Input,
@@ -28,7 +37,10 @@ import {
 } from '../../Modules/components/index';
 import { styles } from './ExercisesScreen.styles';
 
-// Pantalla del catálogo de ejercicios con búsqueda y formulario de alta/edición.
+// Intervalo de sincronización automática mientras la Biblioteca de técnicas está activa y visible.
+const EXERCISE_SYNC_INTERVAL_MS = 4000;
+
+// Pantalla del catálogo de ejercicios con búsqueda, sincronización automática y formulario de alta/edición.
 export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
   const { colors } = useTheme();
   const { token, role } = useAuth();
@@ -40,11 +52,19 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
   const isAdmin = role === 'admin';
 
   const [exercises, setExercises] = useState<any[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [searchCollapsedGroups, setSearchCollapsedGroups] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [errorMessage, setErrorMessage] = useState<any>(null);
   const [successMessage, setSuccessMessage] = useState<any>(null);
+
+  // Referencias para sincronización silenciosa sin parpadeos ni peticiones duplicadas
+  const inFlightRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
+  const isScreenFocusedRef = useRef(true);
+  const isAppActiveRef = useRef(true);
 
   // modal para creacion / edicion de ejercicio
   const [modalVisible, setModalVisible] = useState(false);
@@ -56,7 +76,7 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState<any>(null);
 
-  // modal de confirmacion para eliminacion (solo admin)
+  // modal de confirmacion para eliminacion (trainer y admin)
   const [deleteModal, setDeleteModal] = useState({
     visible: false,
     exerciseId: null,
@@ -64,45 +84,211 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
     loading: false
   });
 
-  const loadExercises = useCallback(async () => {
-    try {
-      setErrorMessage(null);
-      const res = await exerciseService.getExercises({}, token);
-      if (res?.ok && Array.isArray(res?.data?.exercises)) {
-        setExercises(res.data.exercises);
+  const loadExercises = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      const { silent = false } = options;
+      if (!token) {
+        if (!silent) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+        return;
       }
-    } catch (error) {
-      if (error.code === 'NETWORK_ERROR') {
-        setErrorMessage('no se pudo conectar con el servidor. revisá tu conexión');
-      } else {
-        setErrorMessage(error.message || 'error al cargar ejercicios');
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [token]);
 
+      // Evitar solicitudes concurrentes solapadas
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+
+      try {
+        if (!silent) {
+          setErrorMessage(null);
+        }
+        const res = await exerciseService.getExercises({}, token);
+        if (res?.ok && Array.isArray(res?.data?.exercises)) {
+          hasLoadedOnceRef.current = true;
+          // Reconciliación estructural: si la lista no cambió en el backend, conserva la misma referencia
+          // y evita re-renderizar FlatList, parpadeos o reinicio del scroll.
+          setExercises((prev) => reconcileExercisesState(prev, res.data.exercises));
+          // Si había un error previo de red y la conexión se recuperó, limpiar el cartel automáticamente
+          setErrorMessage(null);
+        }
+      } catch (error: any) {
+        // En sincronizaciones silenciosas en segundo plano, si ya teníamos datos cargados,
+        // conservamos la vista actual sin interrumpir al usuario y reintentamos en el próximo ciclo.
+        if (!silent || !hasLoadedOnceRef.current) {
+          if (error?.code === 'NETWORK_ERROR' || error?.code === 'TIMEOUT_ERROR') {
+            setErrorMessage('no se pudo conectar con el servidor. revisá tu conexión');
+          } else {
+            setErrorMessage(error?.message || 'error al cargar ejercicios');
+          }
+        }
+      } finally {
+        inFlightRef.current = false;
+        if (!silent) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [token]
+  );
+
+  // Carga inicial
   useEffect(() => {
-    loadExercises();
+    loadExercises({ silent: false });
   }, [loadExercises]);
+
+  // Sincronización automática entre dispositivos mientras la pantalla está activa y visible
+  useEffect(() => {
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      isScreenFocusedRef.current = true;
+      loadExercises({ silent: hasLoadedOnceRef.current });
+    });
+
+    const unsubscribeBlur = navigation.addListener('blur', () => {
+      isScreenFocusedRef.current = false;
+    });
+
+    // Listener de estado de la app en dispositivos móviles (Android / iOS)
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      const isNowActive = nextState === 'active';
+      const wasInactive = !isAppActiveRef.current;
+      isAppActiveRef.current = isNowActive;
+      if (isNowActive && wasInactive && isScreenFocusedRef.current) {
+        loadExercises({ silent: true });
+      }
+    });
+
+    // Listener de visibilidad y foco de ventana en Web
+    const handleWebVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        isAppActiveRef.current = false;
+        return;
+      }
+      isAppActiveRef.current = true;
+      if (isScreenFocusedRef.current) {
+        loadExercises({ silent: true });
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.addEventListener('focus', handleWebVisibilityOrFocus);
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', handleWebVisibilityOrFocus);
+      }
+    }
+
+    const intervalId = setInterval(() => {
+      if (!isScreenFocusedRef.current || !isAppActiveRef.current) return;
+      if (
+        Platform.OS === 'web' &&
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'hidden'
+      ) {
+        return;
+      }
+      loadExercises({ silent: true });
+    }, EXERCISE_SYNC_INTERVAL_MS);
+
+    return () => {
+      unsubscribeFocus();
+      unsubscribeBlur();
+      appStateSub.remove();
+      clearInterval(intervalId);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleWebVisibilityOrFocus);
+        if (typeof document !== 'undefined') {
+          document.removeEventListener('visibilitychange', handleWebVisibilityOrFocus);
+        }
+      }
+    };
+  }, [navigation, loadExercises]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    loadExercises();
+    loadExercises({ silent: false });
   };
 
-  // filtrado en cliente
-  const filteredExercises = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return exercises;
-    return exercises.filter(
-      (e) =>
-        e.name?.toLowerCase().includes(q) ||
-        e.description?.toLowerCase().includes(q) ||
-        e.muscle_group?.toLowerCase().includes(q)
-    );
+  const isSearchActive = searchQuery.trim().length > 0;
+
+  // Al cambiar el texto de búsqueda, reiniciar las contracciones manuales temporales de búsqueda
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+    setSearchCollapsedGroups({});
+  }, []);
+
+  // Secciones agrupadas por grupo muscular, ordenadas lógicamente y con ejercicios alfabéticos dentro de cada grupo
+  const groupedSections = useMemo<MuscleGroupSection[]>(() => {
+    return groupExercisesByMuscleGroup(exercises, searchQuery);
   }, [exercises, searchQuery]);
+
+  // Grupos musculares existentes en toda la biblioteca para selección rápida en el formulario
+  const existingMuscleGroups = useMemo<string[]>(() => {
+    const allSections = groupExercisesByMuscleGroup(exercises, '');
+    return allSections
+      .filter((s) => s.key !== '__sin_grupo__' && s.rawMuscleGroup)
+      .map((s) => s.rawMuscleGroup);
+  }, [exercises]);
+
+  const totalMatchingExercises = useMemo(() => {
+    return groupedSections.reduce((acc, sec) => acc + sec.count, 0);
+  }, [groupedSections]);
+
+  // Determina si una sección está desplegada:
+  // - Al ingresar sin búsqueda activa, las secciones inician contraídas para mostrar una vista limpia y ordenada.
+  // - Cuando hay búsqueda activa, los grupos con coincidencias se despliegan automáticamente (pudiendo contraerse manualmente).
+  const isSectionExpanded = useCallback(
+    (groupKey: string): boolean => {
+      if (isSearchActive) {
+        return !searchCollapsedGroups[groupKey];
+      }
+      return Boolean(expandedGroups[groupKey]);
+    },
+    [isSearchActive, searchCollapsedGroups, expandedGroups]
+  );
+
+  const toggleGroupSection = useCallback(
+    (groupKey: string) => {
+      if (isSearchActive) {
+        setSearchCollapsedGroups((prev) => ({
+          ...prev,
+          [groupKey]: !prev[groupKey]
+        }));
+      } else {
+        setExpandedGroups((prev) => ({
+          ...prev,
+          [groupKey]: !prev[groupKey]
+        }));
+      }
+    },
+    [isSearchActive]
+  );
+
+  const areAllCurrentSectionsExpanded = useMemo(() => {
+    if (groupedSections.length === 0) return false;
+    return groupedSections.every((sec) => isSectionExpanded(sec.key));
+  }, [groupedSections, isSectionExpanded]);
+
+  const handleToggleAllGroups = useCallback(() => {
+    const shouldExpand = !areAllCurrentSectionsExpanded;
+    if (isSearchActive) {
+      const nextCollapsed: Record<string, boolean> = {};
+      if (!shouldExpand) {
+        for (const sec of groupedSections) {
+          nextCollapsed[sec.key] = true;
+        }
+      }
+      setSearchCollapsedGroups(nextCollapsed);
+    } else {
+      setExpandedGroups((prev) => {
+        const next = { ...prev };
+        for (const sec of groupedSections) {
+          next[sec.key] = shouldExpand;
+        }
+        return next;
+      });
+    }
+  }, [areAllCurrentSectionsExpanded, isSearchActive, groupedSections]);
 
   // abrir modal para crear ejercicio
   const handleOpenCreate = () => {
@@ -148,19 +334,30 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
         // edicion mediante PATCH /api/exercises/:id
         const res = await exerciseService.updateExercise(editingExercise.id, payload, token);
         if (res?.ok && res?.data?.exercise) {
-          setSuccessMessage(`ejercicio "${res.data.exercise.name}" actualizado con éxito`);
+          const updatedItem = res.data.exercise;
+          const targetGroupKey = normalizeMuscleGroupKey(updatedItem.muscle_group);
+          setSuccessMessage(`ejercicio "${updatedItem.name}" actualizado con éxito`);
           setExercises((prev) =>
-            prev.map((e) => (e.id === editingExercise.id ? res.data.exercise : e))
+            reconcileExercisesState(
+              prev,
+              prev.map((e) => (Number(e.id) === Number(editingExercise.id) ? updatedItem : e))
+            )
           );
+          setExpandedGroups((prev) => ({ ...prev, [targetGroupKey]: true }));
           setModalVisible(false);
+          loadExercises({ silent: true });
         }
       } else {
         // creacion mediante POST /api/exercises
         const res = await exerciseService.createExercise(payload, token);
         if (res?.ok && res?.data?.exercise) {
-          setSuccessMessage(`ejercicio "${res.data.exercise.name}" creado con éxito`);
-          setExercises((prev) => [res.data.exercise, ...prev]);
+          const createdItem = res.data.exercise;
+          const targetGroupKey = normalizeMuscleGroupKey(createdItem.muscle_group);
+          setSuccessMessage(`ejercicio "${createdItem.name}" creado con éxito`);
+          setExercises((prev) => reconcileExercisesState(prev, [...prev, createdItem]));
+          setExpandedGroups((prev) => ({ ...prev, [targetGroupKey]: true }));
           setModalVisible(false);
+          loadExercises({ silent: true });
         }
       }
     } catch (error) {
@@ -170,7 +367,7 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
     }
   };
 
-  // apertura del modal de eliminacion (solo admin)
+  // apertura del modal de eliminacion (trainer y admin)
   const handleOpenDelete = (ex) => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -188,11 +385,13 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
     setDeleteModal((prev) => ({ ...prev, loading: true }));
 
     try {
-      const res = await exerciseService.deleteExercise(deleteModal.exerciseId, token);
+      const targetId = Number(deleteModal.exerciseId);
+      const res = await exerciseService.deleteExercise(targetId, token);
       if (res?.ok) {
         const msg = res.message || `ejercicio "${deleteModal.exerciseName}" eliminado con éxito`;
         setSuccessMessage(msg);
-        setExercises((prev) => prev.filter((e) => e.id !== deleteModal.exerciseId));
+        setExercises((prev) => prev.filter((e) => Number(e.id) !== targetId));
+        loadExercises({ silent: true });
       }
     } catch (error) {
       if (error.status === 409 || error.code === 'EXERCISE_IN_USE') {
@@ -213,12 +412,18 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
     advanced: 'AVANZADO'
   };
 
-  const renderExerciseItem = ({ item }) => {
+  const renderExerciseCard = (item: any) => {
     return (
-      <Card style={[styles.exerciseCard, numColumns > 1 && { flex: 1, justifyContent: 'space-between' }]}>
+      <Card
+        key={`ex-card-${item.id}`}
+        style={[
+          styles.exerciseCard,
+          numColumns > 1 && { flex: 1, justifyContent: 'space-between' }
+        ]}
+      >
         <View style={styles.cardHeader}>
           <Text style={[styles.exerciseName, { color: colors.text }]}>
-            {item.name}
+            {cleanDisplayText(item.name)}
           </Text>
           <View style={[styles.difficultyBadge, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.difficultyText, { color: colors.primary }]}>
@@ -229,13 +434,16 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
 
         {item.muscle_group ? (
           <Text style={[styles.muscleGroup, { color: colors.textSecondary }]}>
-            grupo muscular: <Text style={{ color: colors.text, fontWeight: '700' }}>{item.muscle_group}</Text>
+            grupo muscular:{' '}
+            <Text style={{ color: colors.text, fontWeight: '700' }}>
+              {cleanDisplayText(item.muscle_group)}
+            </Text>
           </Text>
         ) : null}
 
         {item.description ? (
           <Text style={[styles.description, { color: colors.textMuted }]}>
-            {item.description}
+            {cleanDisplayText(item.description)}
           </Text>
         ) : null}
 
@@ -262,6 +470,103 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
           </View>
         )}
       </Card>
+    );
+  };
+
+  const renderGroupSection = ({ item: section }: { item: MuscleGroupSection }) => {
+    const isExpanded = isSectionExpanded(section.key);
+
+    return (
+      <View
+        style={[
+          styles.groupSectionContainer,
+          {
+            backgroundColor: colors.surface,
+            borderColor: isExpanded ? colors.primary : colors.border
+          }
+        ]}
+      >
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => toggleGroupSection(section.key)}
+          style={[
+            styles.groupHeaderTouchable,
+            isExpanded && { backgroundColor: withAlpha(colors.primary, 0.08) }
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={`Grupo muscular ${section.title}, ${section.count} ejercicios`}
+        >
+          <View style={styles.groupHeaderLeft}>
+            <View
+              style={[
+                styles.groupAccentDot,
+                { backgroundColor: isExpanded ? colors.primary : colors.border }
+              ]}
+            />
+            <Text style={[styles.groupTitleText, { color: colors.text }]} numberOfLines={1}>
+              {section.title}
+            </Text>
+          </View>
+
+          <View style={styles.groupHeaderRight}>
+            <View
+              style={[
+                styles.groupCountBadge,
+                {
+                  backgroundColor: isExpanded
+                    ? withAlpha(colors.primary, 0.16)
+                    : colors.card,
+                  borderColor: isExpanded ? colors.primary : colors.border
+                }
+              ]}
+            >
+              <Text
+                style={[
+                  styles.groupCountText,
+                  { color: isExpanded ? colors.primary : colors.textSecondary }
+                ]}
+              >
+                {section.count} {section.count === 1 ? 'ejercicio' : 'ejercicios'}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.groupChevronBox,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: isExpanded ? colors.primary : colors.border
+                }
+              ]}
+            >
+              <Text
+                style={[
+                  styles.groupChevronText,
+                  { color: isExpanded ? colors.primary : colors.textSecondary }
+                ]}
+              >
+                {isExpanded ? '▴' : '▾'}
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {isExpanded && (
+          <View style={[styles.groupExercisesList, { borderTopColor: colors.border }]}>
+            {numColumns > 1 ? (
+              <View style={styles.desktopExercisesGrid}>
+                {section.exercises.map((ex) => (
+                  <View key={`ex-col-${ex.id}`} style={styles.desktopExerciseCol}>
+                    {renderExerciseCard(ex)}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              section.exercises.map((ex) => renderExerciseCard(ex))
+            )}
+          </View>
+        )}
+      </View>
     );
   };
 
@@ -296,7 +601,7 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
         <Input
           placeholder="buscar ejercicio por nombre o músculo..."
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearchChange}
           style={styles.searchInput}
         />
 
@@ -310,16 +615,44 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
           />
         )}
 
+        {/* barra de resumen de grupos musculares y control rápido de desplegar/contraer */}
+        {!loading && groupedSections.length > 0 && (
+          <View style={styles.summaryToolbar}>
+            <Text style={[styles.summaryToolbarText, { color: colors.textSecondary }]}>
+              {isSearchActive ? 'RESULTADOS: ' : ''}
+              <Text style={{ color: colors.primary }}>
+                {groupedSections.length}
+              </Text>{' '}
+              {groupedSections.length === 1 ? 'GRUPO MUSCULAR' : 'GRUPOS MUSCULARES'} ·{' '}
+              <Text style={{ color: colors.text }}>
+                {totalMatchingExercises}
+              </Text>{' '}
+              {totalMatchingExercises === 1 ? 'EJERCICIO' : 'EJERCICIOS'}
+            </Text>
+
+            <TouchableOpacity
+              onPress={handleToggleAllGroups}
+              style={[
+                styles.toggleAllBtn,
+                { backgroundColor: colors.surface, borderColor: colors.border }
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={areAllCurrentSectionsExpanded ? 'Contraer todos los grupos' : 'Desplegar todos los grupos'}
+            >
+              <Text style={[styles.toggleAllBtnText, { color: colors.primary }]}>
+                {areAllCurrentSectionsExpanded ? 'CONTRAER TODO ▴' : 'DESPLEGAR TODO ▾'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {loading ? (
           <LoadingSpinner message="cargando biblioteca de ejercicios..." />
         ) : (
           <FlatList
-            key={String(numColumns)}
-            numColumns={numColumns}
-            columnWrapperStyle={numColumns > 1 ? { gap: 14 } : undefined}
-            data={filteredExercises}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={renderExerciseItem}
+            data={groupedSections}
+            keyExtractor={(section) => section.key}
+            renderItem={renderGroupSection}
             contentContainerStyle={styles.listContent}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
@@ -374,10 +707,43 @@ export function ExercisesScreen({ navigation }: ScreenProps<'Exercises'>) {
 
                 <Input
                   label="grupo muscular"
-                  placeholder="ej. pecho / pectoral mayor"
+                  placeholder="ej. pecho / espalda / hombro / pierna / triceps"
                   value={formMuscle}
                   onChangeText={setFormMuscle}
                 />
+
+                {existingMuscleGroups.length > 0 && (
+                  <View style={styles.muscleQuickRow}>
+                    {existingMuscleGroups.map((mg) => {
+                      const isCurrentGroup =
+                        normalizeMuscleGroupKey(formMuscle) === normalizeMuscleGroupKey(mg);
+                      return (
+                        <TouchableOpacity
+                          key={`mg-chip-${mg}`}
+                          onPress={() => setFormMuscle(mg)}
+                          style={[
+                            styles.muscleQuickChip,
+                            {
+                              backgroundColor: isCurrentGroup
+                                ? withAlpha(colors.primary, 0.15)
+                                : colors.surface,
+                              borderColor: isCurrentGroup ? colors.primary : colors.border
+                            }
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.muscleQuickChipText,
+                              { color: isCurrentGroup ? colors.primary : colors.textSecondary }
+                            ]}
+                          >
+                            {mg.toUpperCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
 
                 <Input
                   label="descripción o técnica (opcional)"

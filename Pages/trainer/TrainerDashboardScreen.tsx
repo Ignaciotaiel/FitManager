@@ -19,7 +19,10 @@ import { useTheme } from '../../contexto/themeContext';
 import { withAlpha } from '../../Styles/theme/colors';
 import { useAuth } from '../../contexto/authContext';
 import { routineService } from '../../Modules/routines/routineService';
-import { exerciseService } from '../../Modules/exercises/exerciseService';
+import {
+  exerciseService,
+  reconcileExercisesState
+} from '../../Modules/exercises/exerciseService';
 import { userService } from '../../Modules/users/userService';
 import { adminService } from '../../Modules/admin/adminService';
 import {
@@ -118,7 +121,7 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
         setRoutines(routinesRes.data.routines);
       }
       if (exercisesRes?.ok && Array.isArray(exercisesRes?.data?.exercises)) {
-        setExercisesLibrary(exercisesRes.data.exercises);
+        setExercisesLibrary((prev) => reconcileExercisesState(prev, exercisesRes.data.exercises));
       }
       if (usersRes?.ok && Array.isArray(usersRes?.data?.users)) {
         // filtrar solo socios activos (el backend rechaza asignar rutinas a socios inactivos)
@@ -142,10 +145,11 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
   }, [token]);
 
   const reloadExercises = useCallback(async () => {
+    if (!token) return;
     try {
       const exercisesRes = await exerciseService.getExercises({}, token);
       if (exercisesRes?.ok && Array.isArray(exercisesRes?.data?.exercises)) {
-        setExercisesLibrary(exercisesRes.data.exercises);
+        setExercisesLibrary((prev) => reconcileExercisesState(prev, exercisesRes.data.exercises));
       }
     } catch (err) {
       // mantener la biblioteca previa si falla una recarga puntual en segundo plano
@@ -182,12 +186,22 @@ export function TrainerDashboardScreen({ navigation }: ScreenProps<'TrainerDashb
     });
     const intervalId = setInterval(() => {
       refreshUnreadNotifications();
+      reloadExercises();
     }, 30000);
     return () => {
       unsubscribe();
       clearInterval(intervalId);
     };
-  }, [navigation, loadData, refreshUnreadNotifications]);
+  }, [navigation, loadData, refreshUnreadNotifications, reloadExercises]);
+
+  // Si el modal de crear/editar rutina está abierto, sincronizar técnicas cada 4 segundos sin parpadeos
+  useEffect(() => {
+    if (!modalVisible) return;
+    const modalIntervalId = setInterval(() => {
+      reloadExercises();
+    }, 4000);
+    return () => clearInterval(modalIntervalId);
+  }, [modalVisible, reloadExercises]);
 
   const onRefresh = () => {
     setRefreshing(true);

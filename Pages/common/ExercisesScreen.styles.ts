@@ -46,7 +46,104 @@ export const styles = StyleSheet.create({
   },
   listContent: {
     flexGrow: 1,
-    paddingBottom: 36
+    paddingBottom: 36,
+    paddingTop: 4
+  },
+  summaryToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+    marginBottom: 8,
+    paddingHorizontal: 2
+  },
+  summaryToolbarText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5
+  },
+  toggleAllBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1
+  },
+  toggleAllBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  groupSectionContainer: {
+    marginVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden'
+  },
+  groupHeaderTouchable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 13
+  },
+  groupHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    paddingRight: 10
+  },
+  groupAccentDot: {
+    width: 4,
+    height: 18,
+    borderRadius: 2,
+    marginRight: 10
+  },
+  groupTitleText: {
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    flexShrink: 1
+  },
+  groupHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  groupCountBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1
+  },
+  groupCountText: {
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  groupChevronBox: {
+    width: 26,
+    height: 26,
+    borderRadius: 7,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  groupChevronText: {
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  groupExercisesList: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 6,
+    borderTopWidth: StyleSheet.hairlineWidth
+  },
+  desktopExercisesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12
+  },
+  desktopExerciseCol: {
+    width: '48.8%'
   },
   exerciseCard: {
     padding: 12,
@@ -126,6 +223,23 @@ export const styles = StyleSheet.create({
   modalSubtitle: {
     fontSize: 12,
     marginBottom: 10
+  },
+  muscleQuickRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 2,
+    marginBottom: 8
+  },
+  muscleQuickChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1
+  },
+  muscleQuickChipText: {
+    fontSize: 11,
+    fontWeight: '700'
   },
   difficultyLabel: {
     fontSize: 11,

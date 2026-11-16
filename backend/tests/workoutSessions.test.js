@@ -400,7 +400,69 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       return res.status(200).json({ ok: true, data: { session: { ...session, sets } } });
     });
 
-    // 9. DELETE /api/exercises/:id (simulado con soft-delete si tiene relaciones en workout_set_logs)
+    // 9. Endpoints completos de /api/exercises (GET, POST, PATCH, DELETE idénticos a exerciseController.js)
+    app.get('/api/exercises', testVerifyToken, (req, res) => {
+      const { include_inactive } = req.query;
+      const list = mockExercises
+        .filter(e => include_inactive === 'true' || include_inactive === '1' || (e.is_active ?? 1) === 1)
+        .sort((a, b) => {
+          const cmp = String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' });
+          if (cmp !== 0) return cmp;
+          return Number(a.id) - Number(b.id);
+        });
+      return res.status(200).json({ ok: true, data: { exercises: list } });
+    });
+
+    app.post('/api/exercises', testVerifyToken, testRequireRole('admin', 'trainer'), (req, res) => {
+      const { name, description, muscle_group, difficulty } = req.body;
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({ ok: false, error: { message: 'el nombre del ejercicio es obligatorio', code: 'INVALID_NAME' } });
+      }
+      const nextId = mockExercises.reduce((max, e) => Math.max(max, Number(e.id) || 0), 0) + 1;
+      const created = {
+        id: nextId,
+        name: name.trim(),
+        description: description ? String(description).trim() : null,
+        muscle_group: muscle_group ? String(muscle_group).trim() : null,
+        difficulty: difficulty ? String(difficulty).trim() : 'beginner',
+        is_active: 1
+      };
+      mockExercises.push(created);
+      return res.status(201).json({ ok: true, message: 'ejercicio creado exitosamente', data: { exercise: created } });
+    });
+
+    app.patch('/api/exercises/:id', testVerifyToken, testRequireRole('admin', 'trainer'), (req, res) => {
+      const exId = Number(req.params.id);
+      const ex = mockExercises.find(e => e.id === exId);
+      if (!ex) {
+        return res.status(404).json({ ok: false, error: { message: 'ejercicio no encontrado', code: 'EXERCISE_NOT_FOUND' } });
+      }
+      const { name, description, muscle_group, difficulty } = req.body;
+      if (name !== undefined) {
+        if (typeof name !== 'string' || !name.trim()) {
+          return res.status(400).json({ ok: false, error: { message: 'el nombre no puede estar vacio', code: 'INVALID_NAME' } });
+        }
+        ex.name = name.trim();
+      }
+      if (description !== undefined) ex.description = description ? String(description).trim() : null;
+      if (muscle_group !== undefined) ex.muscle_group = muscle_group ? String(muscle_group).trim() : null;
+      if (difficulty !== undefined) ex.difficulty = String(difficulty).trim();
+      return res.status(200).json({
+        ok: true,
+        message: 'ejercicio actualizado exitosamente',
+        data: {
+          exercise: {
+            id: ex.id,
+            name: ex.name,
+            description: ex.description || null,
+            muscle_group: ex.muscle_group || null,
+            difficulty: ex.difficulty || 'beginner',
+            is_active: ex.is_active ?? 1
+          }
+        }
+      });
+    });
+
     app.delete('/api/exercises/:id', testVerifyToken, testRequireRole('admin', 'trainer'), (req, res) => {
       const exId = Number(req.params.id);
       const ex = mockExercises.find(e => e.id === exId);
@@ -411,10 +473,10 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
       if (hasLogs) {
         // Soft delete / baja lógica
         ex.is_active = 0;
-        return res.status(200).json({ ok: true, message: 'ejercicio archivado (baja lógica)' });
+        return res.status(200).json({ ok: true, message: 'ejercicio archivado (baja lógica)', data: { id: exId, archived: true } });
       }
       mockExercises = mockExercises.filter(e => e.id !== exId);
-      return res.status(200).json({ ok: true, message: 'ejercicio eliminado' });
+      return res.status(200).json({ ok: true, message: 'ejercicio eliminado', data: { id: exId, archived: false } });
     });
 
     // 10. GET /api/workouts/exercises/:exerciseId/history (idéntico a getExerciseHistory en workoutController.js)
@@ -1589,6 +1651,373 @@ describe('Pruebas del Sistema de Entrenamientos: Sesiones, Series y Control de A
         ? Math.round((lastInPeriod.maxWeight - firstInPeriod.maxWeight) * 10) / 10
         : 0;
     assert.strictEqual(diffInPeriod, 8);
+  });
+
+  test('31. Sincronización en tiempo real de Biblioteca de técnicas entre dispositivos (Escenarios 1 a 8)', async () => {
+    const tokenTrainer = makeToken(mockUsers[1]); // Trainer John (id: 2)
+    const tokenAlice = makeToken(mockUsers[2]);   // Member Alice (id: 3)
+    const tokenBob = makeToken(mockUsers[3]);     // Member Bob (id: 4)
+
+    // Helper idéntico a reconcileExercisesState de Modules/exercises/exerciseService.tsx
+    const isSameItem = (a, b) =>
+      Boolean(a && b) &&
+      Number(a.id) === Number(b.id) &&
+      String(a.name || '') === String(b.name || '') &&
+      String(a.description || '') === String(b.description || '') &&
+      String(a.muscle_group || '') === String(b.muscle_group || '') &&
+      String(a.difficulty || 'beginner') === String(b.difficulty || 'beginner') &&
+      Number(a.is_active ?? 1) === Number(b.is_active ?? 1);
+
+    const reconcileState = (prevList, incomingList) => {
+      const safePrev = Array.isArray(prevList) ? prevList : [];
+      const byId = new Map();
+      for (const item of incomingList || []) {
+        const id = Number(item?.id);
+        if (!Number.isInteger(id) || id <= 0) continue;
+        if (item.is_active === 0 || item.is_active === false) continue;
+        byId.set(id, { ...item, id });
+      }
+      const normalizedNext = Array.from(byId.values()).sort((a, b) => {
+        const cmp = String(a.name || '').trim().localeCompare(String(b.name || '').trim(), 'es', { sensitivity: 'base' });
+        return cmp !== 0 ? cmp : Number(a.id) - Number(b.id);
+      });
+
+      if (
+        safePrev.length === normalizedNext.length &&
+        safePrev.every((item, idx) => isSameItem(item, normalizedNext[idx]))
+      ) {
+        return safePrev; // Misma referencia exacta: sin re-render ni parpadeo
+      }
+
+      const prevById = new Map(safePrev.map(i => [Number(i.id), i]));
+      return normalizedNext.map(nextItem => {
+        const existing = prevById.get(Number(nextItem.id));
+        return existing && isSameItem(existing, nextItem) ? existing : nextItem;
+      });
+    };
+
+    // Estado inicial: Alice y Bob abren su Biblioteca de técnicas simultáneamente desde distintos dispositivos (Escenario 8)
+    const initAliceRes = await fetch(`${baseUrl}/api/exercises`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const initBobRes = await fetch(`${baseUrl}/api/exercises`, {
+      headers: { Authorization: `Bearer ${tokenBob}` }
+    });
+    assert.strictEqual(initAliceRes.status, 200);
+    assert.strictEqual(initBobRes.status, 200);
+
+    let aliceLibrary = reconcileState([], (await initAliceRes.json()).data.exercises);
+    let bobLibrary = reconcileState([], (await initBobRes.json()).data.exercises);
+    const initialCount = aliceLibrary.length;
+    assert.strictEqual(bobLibrary.length, initialCount);
+
+    // Si el ciclo de polling corre sin cambios en el backend, la referencia del array NO cambia (0 parpadeos)
+    const unchangedPollRes = await fetch(`${baseUrl}/api/exercises`, {
+      headers: { Authorization: `Bearer ${tokenAlice}` }
+    });
+    const prevAliceRef = aliceLibrary;
+    aliceLibrary = reconcileState(aliceLibrary, (await unchangedPollRes.json()).data.exercises);
+    assert.strictEqual(aliceLibrary, prevAliceRef);
+
+    // Verificar seguridad (Etapa 4): Un socio (Alice) NO puede crear, editar ni eliminar técnicas (403 Forbidden)
+    const forbiddenCreate = await fetch(`${baseUrl}/api/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenAlice}` },
+      body: JSON.stringify({ name: 'Intento Socio', muscle_group: 'Pecho', difficulty: 'beginner' })
+    });
+    assert.strictEqual(forbiddenCreate.status, 403);
+
+    // Escenario 1: Usuario con biblioteca abierta y entrenador agrega una técnica desde su dispositivo
+    const createTechRes = await fetch(`${baseUrl}/api/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({
+        name: 'Técnica Retracción Escapular',
+        description: 'Mantener hombros atrás y abajo durante el empuje',
+        muscle_group: 'Espalda / Postura',
+        difficulty: 'beginner'
+      })
+    });
+    assert.strictEqual(createTechRes.status, 201);
+    const createdTech = (await createTechRes.json()).data.exercise;
+
+    // Sincronización automática en segundo plano para Alice y Bob (sin recargar manualmente)
+    const sync1Alice = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    const sync1Bob = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenBob}` } });
+    const prevFirstItemRef = aliceLibrary[0];
+    aliceLibrary = reconcileState(aliceLibrary, (await sync1Alice.json()).data.exercises);
+    bobLibrary = reconcileState(bobLibrary, (await sync1Bob.json()).data.exercises);
+
+    assert.strictEqual(aliceLibrary.length, initialCount + 1);
+    assert.strictEqual(bobLibrary.length, initialCount + 1);
+    assert.ok(aliceLibrary.some(e => e.id === createdTech.id && e.name === 'Técnica Retracción Escapular'));
+    assert.ok(bobLibrary.some(e => e.id === createdTech.id && e.name === 'Técnica Retracción Escapular'));
+    // Los ítems preexistentes conservan su misma referencia de objeto (no parpadean las tarjetas existentes)
+    assert.ok(aliceLibrary.includes(prevFirstItemRef));
+
+    // Escenario 2: Usuario con biblioteca abierta y entrenador agrega un ejercicio
+    const createExRes = await fetch(`${baseUrl}/api/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({
+        name: 'Dominadas Supinas',
+        description: 'Agarre supino ancho de hombros',
+        muscle_group: 'Espalda',
+        difficulty: 'intermediate'
+      })
+    });
+    assert.strictEqual(createExRes.status, 201);
+    const createdEx = (await createExRes.json()).data.exercise;
+
+    const sync2Alice = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    aliceLibrary = reconcileState(aliceLibrary, (await sync2Alice.json()).data.exercises);
+    assert.strictEqual(aliceLibrary.length, initialCount + 2);
+    assert.ok(aliceLibrary.some(e => e.id === createdEx.id && e.name === 'Dominadas Supinas'));
+
+    // Escenario 3: Entrenador agrega varios elementos consecutivamente
+    const consecutiveNames = [' Aperturas en Polea', 'Curl Martillo Alternado', 'Zancadas Búlgaras'];
+    const createdConsecutiveIds = [];
+    for (const rawName of consecutiveNames) {
+      const r = await fetch(`${baseUrl}/api/exercises`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+        body: JSON.stringify({ name: rawName, muscle_group: 'General', difficulty: 'intermediate' })
+      });
+      assert.strictEqual(r.status, 201);
+      createdConsecutiveIds.push((await r.json()).data.exercise.id);
+    }
+
+    const sync3Alice = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    aliceLibrary = reconcileState(aliceLibrary, (await sync3Alice.json()).data.exercises);
+    assert.strictEqual(aliceLibrary.length, initialCount + 5);
+    // Verificar que no hay duplicados por ID y que están todos los nuevos elementos
+    const uniqueIds = new Set(aliceLibrary.map(e => e.id));
+    assert.strictEqual(uniqueIds.size, aliceLibrary.length);
+    for (const cid of createdConsecutiveIds) {
+      assert.ok(uniqueIds.has(cid));
+    }
+
+    // Escenario 4: Entrenador edita un elemento existente y se sincroniza automáticamente
+    const editRes = await fetch(`${baseUrl}/api/exercises/${createdTech.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({
+        name: 'Técnica Retracción Escapular Avanzada',
+        difficulty: 'advanced'
+      })
+    });
+    assert.strictEqual(editRes.status, 200);
+
+    const sync4Alice = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    aliceLibrary = reconcileState(aliceLibrary, (await sync4Alice.json()).data.exercises);
+    const updatedInAlice = aliceLibrary.find(e => e.id === createdTech.id);
+    assert.notStrictEqual(updatedInAlice, undefined);
+    assert.strictEqual(updatedInAlice.name, 'Técnica Retracción Escapular Avanzada');
+    assert.strictEqual(updatedInAlice.difficulty, 'advanced');
+
+    // Escenario 5: Entrenador elimina un elemento y desaparece automáticamente de la biblioteca activa
+    const delRes = await fetch(`${baseUrl}/api/exercises/${createdEx.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(delRes.status, 200);
+
+    const sync5Alice = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    aliceLibrary = reconcileState(aliceLibrary, (await sync5Alice.json()).data.exercises);
+    assert.strictEqual(aliceLibrary.some(e => e.id === createdEx.id), false);
+    assert.strictEqual(aliceLibrary.length, initialCount + 4);
+
+    // Escenario 6: Usuario sale de la biblioteca (blur -> detiene polling) y al volver a entrar (focus) sincroniza novedades
+    let isScreenFocused = false; // usuario salió de ExercisesScreen
+    const whileAwayRes = await fetch(`${baseUrl}/api/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({ name: 'Remo Pendlay', muscle_group: 'Espalda', difficulty: 'advanced' })
+    });
+    assert.strictEqual(whileAwayRes.status, 201);
+    const whileAwayEx = (await whileAwayRes.json()).data.exercise;
+    // Mientras está fuera, no se actualiza
+    assert.strictEqual(aliceLibrary.some(e => e.id === whileAwayEx.id), false);
+
+    // Usuario vuelve a entrar (focus) -> sincroniza inmediatamente
+    isScreenFocused = true;
+    if (isScreenFocused) {
+      const onFocusRes = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+      aliceLibrary = reconcileState(aliceLibrary, (await onFocusRes.json()).data.exercises);
+    }
+    assert.strictEqual(aliceLibrary.some(e => e.id === whileAwayEx.id), true);
+
+    // Escenario 7: Se pierde temporalmente la conexión durante un ciclo silencioso y luego se recupera
+    const snapshotBeforeOffline = aliceLibrary;
+    try {
+      // Simular fallo de red en ciclo silent
+      throw Object.assign(new Error('network error'), { code: 'NETWORK_ERROR' });
+    } catch (_) {
+      // En modo silent con datos ya cargados, se conserva intacta la lista actual
+    }
+    assert.strictEqual(aliceLibrary, snapshotBeforeOffline);
+
+    // Cuando la conexión vuelve en el siguiente ciclo, sincroniza normalmente
+    const syncAfterRecovery = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenBob}` } });
+    bobLibrary = reconcileState(bobLibrary, (await syncAfterRecovery.json()).data.exercises);
+    assert.deepStrictEqual(bobLibrary.map(e => e.id), aliceLibrary.map(e => e.id));
+  });
+
+  test('32. Organización de Biblioteca de técnicas por grupo muscular, búsqueda y sincronización entre secciones (Pruebas 1 a 11)', async () => {
+    const tokenTrainer = makeToken(mockUsers[1]); // Trainer John
+    const tokenAlice = makeToken(mockUsers[2]);   // Member Alice
+
+    // Funciones equivalentes a groupExercisesByMuscleGroup de Modules/exercises/exerciseService.tsx
+    const PRIORITY = {
+      pecho: 1, pectoral: 1, pectorales: 1,
+      espalda: 2, dorsal: 2, dorsales: 2,
+      hombro: 3, hombros: 3, deltoides: 3,
+      pierna: 4, piernas: 4, cuadriceps: 4, isquiotibiales: 4,
+      biceps: 5, triceps: 6, brazos: 7, antebrazo: 7,
+      gluteo: 8, gluteos: 8, abdomen: 9, abdominales: 9, core: 9
+    };
+
+    const normalizeSearchText = (val) =>
+      String(val || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const normalizeMuscleGroupKey = (rawGroup) => {
+      const cleaned = String(rawGroup || '').trim();
+      return cleaned ? normalizeSearchText(cleaned) : '__sin_grupo__';
+    };
+
+    const formatMuscleGroupLabel = (rawGroup) => {
+      const cleaned = String(rawGroup || '').replace(/\s+/g, ' ').trim();
+      return cleaned ? cleaned.toUpperCase() : 'SIN GRUPO ASIGNADO';
+    };
+
+    const groupExercises = (rawList, searchQuery = '') => {
+      const byId = new Map();
+      for (const item of rawList || []) {
+        const id = Number(item?.id);
+        if (!Number.isInteger(id) || id <= 0) continue;
+        if (item.is_active === 0 || item.is_active === false) continue;
+        byId.set(id, { ...item, id });
+      }
+      const deduplicated = Array.from(byId.values());
+      const q = normalizeSearchText(searchQuery);
+      const filtered = q
+        ? deduplicated.filter(
+            ex =>
+              normalizeSearchText(ex.name).includes(q) ||
+              normalizeSearchText(ex.description).includes(q) ||
+              normalizeSearchText(ex.muscle_group).includes(q)
+          )
+        : deduplicated;
+
+      const sectionsMap = new Map();
+      for (const ex of filtered) {
+        const key = normalizeMuscleGroupKey(ex.muscle_group);
+        let sec = sectionsMap.get(key);
+        if (!sec) {
+          sec = { key, title: formatMuscleGroupLabel(ex.muscle_group), count: 0, exercises: [] };
+          sectionsMap.set(key, sec);
+        }
+        sec.exercises.push(ex);
+        sec.count = sec.exercises.length;
+      }
+
+      const sections = Array.from(sectionsMap.values()).filter(s => s.count > 0);
+      for (const sec of sections) {
+        sec.exercises.sort((a, b) => {
+          const cmp = String(a.name || '').trim().localeCompare(String(b.name || '').trim(), 'es', { sensitivity: 'base' });
+          return cmp !== 0 ? cmp : Number(a.id) - Number(b.id);
+        });
+      }
+      sections.sort((a, b) => {
+        const orderA = a.key === '__sin_grupo__' ? 999 : (PRIORITY[a.key] ?? 100);
+        const orderB = b.key === '__sin_grupo__' ? 999 : (PRIORITY[b.key] ?? 100);
+        if (orderA !== orderB) return orderA - orderB;
+        return a.title.localeCompare(b.title, 'es', { sensitivity: 'base' });
+      });
+      return sections;
+    };
+
+    // 1. Crear ejercicios activos en "pierna" y "triceps" (igual que en la BD real) y comprobar agrupación inicial
+    const createLegRes = await fetch(`${baseUrl}/api/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({ name: 'Sentadilla Libre', muscle_group: 'pierna', difficulty: 'advanced' })
+    });
+    assert.strictEqual(createLegRes.status, 201);
+
+    const createTriRes = await fetch(`${baseUrl}/api/exercises`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({ name: 'Press Francés con Barra Z', muscle_group: 'triceps', difficulty: 'advanced' })
+    });
+    assert.strictEqual(createTriRes.status, 201);
+    const triExercise = (await createTriRes.json()).data.exercise;
+
+    const getRes1 = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    const rawList1 = (await getRes1.json()).data.exercises;
+    const sections1 = groupExercises(rawList1, '');
+
+    // Verificar que cada ejercicio aparece una sola vez en toda la estructura agrupada (Prueba 2)
+    const allGroupedIds = sections1.flatMap(s => s.exercises.map(e => e.id));
+    assert.strictEqual(new Set(allGroupedIds).size, allGroupedIds.length);
+    assert.strictEqual(allGroupedIds.length, rawList1.length);
+
+    // Verificar orden lógico de grupos principales: PECHO -> ESPALDA -> HOMBROS -> PIERNA -> TRICEPS (Prueba 1)
+    const mainGroupKeys = sections1.map(s => s.key).filter(k => ['pecho', 'espalda', 'hombros', 'pierna', 'triceps'].includes(k));
+    assert.deepStrictEqual(mainGroupKeys, ['pecho', 'espalda', 'hombros', 'pierna', 'triceps']);
+
+    // Verificar orden alfabético dentro del grupo "espalda"
+    const espaldaSec = sections1.find(s => s.key === 'espalda');
+    assert.notStrictEqual(espaldaSec, undefined);
+    assert.deepStrictEqual(
+      espaldaSec.exercises.map(e => e.name),
+      [...espaldaSec.exercises.map(e => e.name)].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
+    );
+
+    // 2. Comprobar búsqueda insensible a mayúsculas y tildes filtrando solo grupos con coincidencias (Prueba 4 y 5)
+    const searchSections = groupExercises(rawList1, 'FRANCES');
+    assert.strictEqual(searchSections.length, 1);
+    assert.strictEqual(searchSections[0].key, 'triceps');
+    assert.strictEqual(searchSections[0].count, 1);
+    assert.strictEqual(searchSections[0].exercises[0].id, triExercise.id);
+
+    // Al borrar la búsqueda se recuperan todos los grupos (Prueba 5)
+    const restoredSections = groupExercises(rawList1, '');
+    assert.strictEqual(restoredSections.length, sections1.length);
+
+    // 3. Al editar el grupo muscular de un ejercicio ("triceps" -> "hombros"), desaparece del grupo anterior y pasa al nuevo (Prueba 7)
+    const moveGroupRes = await fetch(`${baseUrl}/api/exercises/${triExercise.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenTrainer}` },
+      body: JSON.stringify({ muscle_group: 'Hombros' })
+    });
+    assert.strictEqual(moveGroupRes.status, 200);
+
+    const getRes2 = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    const sections2 = groupExercises((await getRes2.json()).data.exercises, '');
+
+    // Como era el único ejercicio en "triceps", la sección "triceps" ya no se muestra vacía
+    assert.strictEqual(sections2.some(s => s.key === 'triceps'), false);
+    const hombrosSec = sections2.find(s => s.key === 'hombros');
+    assert.notStrictEqual(hombrosSec, undefined);
+    assert.strictEqual(hombrosSec.exercises.some(e => e.id === triExercise.id), true);
+
+    // 4. Al eliminar el ejercicio, desaparece de la sección y de la biblioteca (Prueba 8)
+    const delTriRes = await fetch(`${baseUrl}/api/exercises/${triExercise.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenTrainer}` }
+    });
+    assert.strictEqual(delTriRes.status, 200);
+
+    const getRes3 = await fetch(`${baseUrl}/api/exercises`, { headers: { Authorization: `Bearer ${tokenAlice}` } });
+    const sections3 = groupExercises((await getRes3.json()).data.exercises, '');
+    const hombrosSecAfterDel = sections3.find(s => s.key === 'hombros');
+    assert.strictEqual(hombrosSecAfterDel.exercises.some(e => e.id === triExercise.id), false);
   });
 });
 

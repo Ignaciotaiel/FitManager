@@ -52,7 +52,7 @@ export async function listExercises(req, res, next) {
       params.push(queryPattern, queryPattern);
     }
 
-    sql += ' ORDER BY name ASC';
+    sql += ' ORDER BY name ASC, id ASC';
 
     const [rows] = await pool.execute(sql, params);
 
@@ -142,7 +142,8 @@ export async function createExercise(req, res, next) {
           name: cleanName,
           description: cleanDesc,
           muscle_group: cleanMuscle,
-          difficulty: cleanDifficulty
+          difficulty: cleanDifficulty,
+          is_active: 1
         }
       }
     });
@@ -221,7 +222,8 @@ export async function updateExercise(req, res, next) {
           name: newName,
           description: newDesc,
           muscle_group: newMuscle,
-          difficulty: newDifficulty
+          difficulty: newDifficulty,
+          is_active: 1
         }
       }
     });
